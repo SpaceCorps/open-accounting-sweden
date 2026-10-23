@@ -2,7 +2,18 @@
 
 Self-hostable, agentic-first bookkeeping for Swedish small companies (aktiebolag). It keeps the books and the receipts, and prepares every number and document needed for the statutory reports, so an agent (or a human) can review and submit them on time.
 
-> Status: pre-alpha. Working today: time tracking (projects, activity types, CSV export), an append-only double-entry ledger with propose-and-approve postings and a hash-chained integrity check, a receipts archive (web, CLI or agent upload, kept unchanged), bank statement import (CSV), explainable receipt-to-bank-line matching, booking bank lines as draft vouchers, SIE 4 export, a trial balance, the `oas` CLI and a web panel. a quarterly VAT report with VAT codes on ledger lines, readiness checks and per-box owner verification (every box mapping starts UNVERIFIED until checked against Skatteverket's SKV 4700; nothing is filed automatically). payroll for a few employees (monthly pay runs, employer contributions by age class, a locked run that proposes a ledger voucher, and an AGI XML file that validates against Skatteverket's published schema; every rate starts UNVERIFIED and preliminary tax is entered per person). Not built yet: Skatteverket's tax tables, benefits, absence and holiday pay, the annual report, live bank feeds. Nothing here is tax or legal advice. The company owner stays legally responsible for the books and filings.
+> Status: pre-alpha. Nothing here is tax or legal advice. The company owner stays legally responsible for the books and filings.
+
+## What works today
+
+- **Time tracking:** projects, activity types with message templates, timer, CSV export.
+- **Ledger:** append-only double-entry books, propose-and-approve postings, hash-chained integrity check, SIE 4 export, trial balance, audit log.
+- **Receipts and bank:** immutable receipts archive (web, CLI or agent upload), bank CSV import, explainable receipt matching, bank lines booked as draft vouchers.
+- **VAT:** VAT codes on ledger lines and a quarterly report with readiness checks. Every box mapping starts UNVERIFIED until the owner checks it against SKV 4700. Nothing is filed automatically.
+- **Payroll:** employees, monthly pay runs, employer contributions by age class, a locked run that proposes a ledger voucher, and an AGI XML file that validates against Skatteverket's published schema. Every rate starts UNVERIFIED and preliminary tax is entered per person.
+- **Access:** username and password login, expiring sessions, permanent access tokens, and agent users that can propose but never approve.
+
+Not built yet: Skatteverket's tax tables, taxable benefits, absence and holiday pay, the annual report and INK2, live bank feeds.
 
 ## Try it
 
@@ -30,9 +41,16 @@ The web panel signs in with the same username and password. Users with role `age
 - **Report prep.** Deadline-driven preparation of VAT (moms), employer declarations (AGI), the annual report and the tax return (INK2), each with its numbers and the supporting receipts.
 - **Secure.** Authenticated CLI sessions, encrypted secrets, audit trail, least-privilege tokens, encrypted backups.
 
+## Tests
+
+```bash
+cargo test --workspace      # core logic: amounts, bank CSV, matching, payroll, SIE helpers
+scripts/smoke.sh            # end to end against a throwaway server: auth, ledger rules, VAT, receipts, payroll
+```
+
 ## Web app
 
-The web panel (`web/`) is a Vite+ and React app built on the SpaceCorps design system, [`@spacecorps/components`](https://github.com/SpaceCorps/storybook) (MIT): sidebar shell, dashboard, time tracking, ledger with approve and correct actions, settings. `oas-server` serves it when `OAS_WEB_DIR` points at the build.
+The web panel (`web/`) is a Vite+ and React app built on the SpaceCorps design system, [`@spacecorps/components`](https://github.com/SpaceCorps/storybook) (MIT): sidebar shell, dashboard, time, inbox, bank, ledger, VAT, payroll and settings. `oas-server` serves it when `OAS_WEB_DIR` points at the build.
 
 ```bash
 git clone https://github.com/SpaceCorps/storybook ../storybook && (cd ../storybook && pnpm install && vp pack)
@@ -44,22 +62,24 @@ cd .. && OAS_WEB_DIR=$PWD/web/dist cargo run -p oas-server
 
 The Docker image does the same: it clones the storybook repository at a pinned commit (`STORYBOOK_REF` in the `Dockerfile`), builds it, then builds the web app, so deploying needs no registry token.
 
-## Planned architecture
+## Architecture
 
 | Part | Choice |
 | :--- | :--- |
 | Server and CLI | Rust (Edition 2024), shared core crate |
 | Web UI | Vite+ (`vp`), React, `@spacecorps/components` from the SpaceCorps storybook |
-| Storage | PostgreSQL for the ledger, object storage (S3-compatible or local volume) for receipts |
-| Auth | Per-instance login for the CLI with revocable tokens kept in the OS keystore |
+| Storage | SQLite (WAL) on one volume for the MVP, receipts as files next to it; PostgreSQL is the planned option later |
+| Auth | Username and password (Argon2id), expiring sessions, revocable access tokens; agent users cannot approve |
 | Output | YAML by default, `--json` for agents, structured error envelopes |
 
-## Open questions (to settle before code)
+## Open questions
 
-1. The full current legal requirements: Bokföringslagen and BFNAR rules, VAT, AGI, annual report and INK2 formats, deadlines, retention, and what counts as an acceptable digital system. These must be researched and cited, not assumed.
-2. Which filings can be submitted through APIs and which need manual entry in the Skatteverket and Bolagsverket e-services.
-3. Data model for vouchers, VAT codes (including reverse charge on foreign SaaS), payroll and benefits.
-4. Threat model for holding payroll and financial data.
+See section 7 of [the legal requirements report](docs/reports/legal-requirements.md) for the full list. The ones that matter most:
+
+1. Whether a single company can get production API access from Skatteverket for its own filings (until answered, filings are prepared here and entered in the e-service).
+2. Bolagsverket's requirements for submitting digital annual reports.
+3. BAS licensing for bundling the chart of accounts, and the SIE 4C record syntax.
+4. Every VAT box, payroll rate and deadline is marked unverified until the owner checks it against Skatteverket.
 
 ## License
 
