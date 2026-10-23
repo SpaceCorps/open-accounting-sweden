@@ -18,7 +18,7 @@ Status: draft for review. It builds on [the legal requirements report](reports/l
 | `oas-server` (Rust) | HTTP API, auth, storage, scheduler for deadlines, archive and backups. |
 | `oas` (Rust CLI) | Primary interface: authenticated against an instance, YAML output by default and `--json`, stable exit codes, `agent-readme`. |
 | `web/` (Vite+ and React) | Review UI for approvals, receipts, reports and the deadline calendar, using `@spacecorps/components`. |
-| PostgreSQL | Ledger, rule tables, audit log. |
+| Database | SQLite (WAL) in the MVP, one file on one volume, which keeps self-hosting to a single container. PostgreSQL is the planned option once the ledger needs concurrent writers or managed backups. Both must pass the same append-only tests. |
 | Document store | Original receipts and invoices, immutable, content-addressed. S3-compatible or a local volume. |
 
 ## Ledger integrity
@@ -116,7 +116,20 @@ Working hours are a separate module. They are not part of the statutory bookkeep
 
 ## Deployment
 
-One container for the server and one for Postgres, deployable on Sliplane or any host. Volumes hold the document store and backups. Retention is seven years after the financial year, and the system must keep a way to print or read records for the whole period.
+One container with the server and its SQLite file on a volume (`/data`), deployable on Sliplane or any host. The MVP runs this way on the SpaceCorps Sliplane account, built from the repository's `Dockerfile` and protected by a bearer token (`OAS_TOKEN`). Document storage and separate backups come with the ledger. Retention is seven years after the financial year, and the system must keep a way to print or read records for the whole period.
+
+## Lessons from Midday
+
+[docs/research/midday-study.md](research/midday-study.md) studies the open-source Midday app. Midday is AGPL-3.0 with an extra commercial-use clause, so it is a clean-room boundary: we take ideas only, and nobody copies or translates its code, schemas or prompts. It is expense and invoice tracking rather than a ledger, and it has no real self-hosting path. Takeaways that shape our design:
+
+- **Receipt matching** is a deterministic, explainable score over name, amount, currency and date, not an embedding. Every suggestion stores its sub-scores and reason, and moves through pending, confirmed, declined, expired and unmatched. Our `document` to `voucher` link goes through such a suggestion record.
+- **Two thresholds, human by default.** A moderate score suggests; only a high score auto-links, and only an attachment to a draft, never a posting.
+- **Safe learning:** per-company alias memory, decayed negatives, and a declined pair is never suggested again. Swedish signals Midday lacks: OCR numbers, Bankgiro and Plusgiro references, and net versus gross at 25, 12 and 6 percent VAT.
+- **Evaluation command:** a read-only `oas inbox eval` that lists likely false positives and negatives, so threshold changes can be reviewed.
+- **Agent surface:** CLI with `--json` and no prompts for agents, the same operations as MCP tools, stdin input and key-based login. We add what Midday lacks: scopes that separate propose from approve, agent tokens that cannot approve, and an audit log row per agent call.
+- **Time tracking:** one running timer, a project picker, and calendar views. We keep confirm-before-create and activity types, and add the timezone and overlap checks Midday lacks.
+- **Document processing:** a status with retry, stale detection, and a failed extraction that never blocks filing the original. Extraction is pluggable so a local model is possible.
+- **What not to copy:** cascade deletes, editable and deletable financial rows, and hosted-only dependencies. Our ledger never cascades and never edits in place.
 
 ## Build order
 
