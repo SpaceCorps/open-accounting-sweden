@@ -44,7 +44,24 @@ oas voucher propose --date D --description TEXT [--counterparty C] --debit ACCOU
 oas voucher drafts | list [--from D] [--to D] | show ID | approve ID | reject ID | correct ID
 oas ledger verify | trial-balance [--year Y | --from D --to D] | audit
 oas export sie [--year Y] [--out FILE]
+oas doc add FILE [--vendor V] [--amount A] [--currency SEK] [--date D] [--notes N]
+oas doc list [--status unlinked|draft|booked] | meta ID [--vendor V --amount A --currency C --date D --notes N] | download ID [--out FILE]
+oas bank import FILE.csv | list [--status new|booked|ignored] | match | ignore ID
+oas bank book ID [--description T] --debit ACCOUNT=AMOUNT ... --credit ACCOUNT=AMOUNT ... [--doc ID]...
+oas match list [--status pending|confirmed|declined] | confirm ID | decline ID
 oas agent-readme
+
+## Receipts and bank lines
+- Read each receipt yourself and pass what you read: `oas doc add receipt.pdf --vendor 'Amazon Web
+  Services' --amount 1250.00 --currency SEK --date 2026-10-20`. Matching uses vendor, amount,
+  currency and date, so fill them in. Uploading the same file twice returns the existing document.
+- `oas bank import statement.csv` takes a Lunar or other bank CSV (comma or semicolon, English or
+  Swedish headers: date/datum, amount/belopp, text/description, reference). Re-importing is safe.
+- Matching only suggests. Only an admin runs `match confirm` or `match decline`; do not try to.
+- `oas bank book` turns a bank line into a DRAFT voucher: give only the counter lines, the bank
+  account line (1930) is added from the sign of the bank amount. Confirmed receipts attach
+  automatically. A human still approves the draft with `oas voucher approve`.
+- Receipts and posted vouchers cannot be changed or deleted.
 
 ## Ledger rules (read before posting)
 - Agents only PROPOSE. `voucher propose` creates a draft. Approving, rejecting and correcting
@@ -130,8 +147,104 @@ enum Cmd {
         #[command(subcommand)]
         action: ExportCmd,
     },
+    /// Receipts and invoices
+    Doc {
+        #[command(subcommand)]
+        action: DocCmd,
+    },
+    /// Bank statement import and booking
+    Bank {
+        #[command(subcommand)]
+        action: BankCmd,
+    },
+    /// Receipt to bank line suggestions
+    Match {
+        #[command(subcommand)]
+        action: MatchCmd,
+    },
     /// Operating manual for agents
     AgentReadme,
+}
+
+#[derive(Subcommand)]
+enum DocCmd {
+    /// Upload a receipt or invoice with what you read from it
+    Add {
+        file: PathBuf,
+        #[arg(long)]
+        vendor: Option<String>,
+        #[arg(long)]
+        amount: Option<String>,
+        #[arg(long)]
+        currency: Option<String>,
+        #[arg(long)]
+        date: Option<String>,
+        #[arg(long)]
+        notes: Option<String>,
+    },
+    List {
+        #[arg(long)]
+        status: Option<String>,
+    },
+    /// Replace the details read from a document
+    Meta {
+        id: i64,
+        #[arg(long)]
+        vendor: Option<String>,
+        #[arg(long)]
+        amount: Option<String>,
+        #[arg(long)]
+        currency: Option<String>,
+        #[arg(long)]
+        date: Option<String>,
+        #[arg(long)]
+        notes: Option<String>,
+    },
+    Download {
+        id: i64,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum BankCmd {
+    Import { file: PathBuf },
+    List {
+        #[arg(long)]
+        status: Option<String>,
+    },
+    /// Re-run matching of receipts against bank lines
+    Match,
+    Ignore { id: i64 },
+    /// Create a draft voucher from a bank line
+    Book {
+        id: i64,
+        #[arg(long)]
+        description: Option<String>,
+        /// ACCOUNT=AMOUNT, repeatable
+        #[arg(long = "debit")]
+        debits: Vec<String>,
+        /// ACCOUNT=AMOUNT, repeatable
+        #[arg(long = "credit")]
+        credits: Vec<String>,
+        /// Receipt document id, repeatable
+        #[arg(long = "doc")]
+        docs: Vec<i64>,
+        /// Bank account number, default 1930
+        #[arg(long)]
+        bank_account: Option<i64>,
+    },
+}
+
+#[derive(Subcommand)]
+enum MatchCmd {
+    List {
+        #[arg(long)]
+        status: Option<String>,
+    },
+    Confirm { id: i64 },
+    Decline { id: i64 },
 }
 
 #[derive(Subcommand)]
@@ -495,6 +608,49 @@ fn request_bytes(cfg: &Config, path: &str) -> Result<(u16, Vec<u8>), Failure> {
     Ok((status, bytes))
 }
 
+fn post_bytes(cfg: &Config, path: &str, content_type: &str, bytes: &[u8]) -> Result<Value, Failure> {
+    let url = format!("{}/api{}", cfg.url, path);
+    let mut resp = agent()
+        .post(&url)
+        .header("Authorization", &format!("Bearer {}", cfg.token))
+        .content_type(content_type)
+        .send(bytes)
+        .map_err(|e| Failure::new("network", format!("cannot reach {}: {e}", cfg.url)))?;
+    let status = resp.status().as_u16();
+    let text = resp
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| Failure::new("network", format!("bad response: {e}")))?;
+    if (200..300).contains(&status) {
+        serde_json::from_str(&text).map_err(|_| Failure::new("internal", "invalid JSON from server"))
+    } else {
+        Err(failure_from(&text))
+    }
+}
+
+fn mime_for(path: &std::path::Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).as_deref() {
+        Some("pdf") => "application/pdf",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("gif") => "image/gif",
+        Some("txt") => "text/plain",
+        Some("csv") => "text/csv",
+        _ => "application/octet-stream",
+    }
+}
+
+fn meta_query(vendor: &Option<String>, amount: &Option<String>, currency: &Option<String>, date: &Option<String>, notes: &Option<String>) -> Vec<String> {
+    let mut parts = vec![];
+    for (k, v) in [("vendor", vendor), ("amount", amount), ("currency", currency), ("date", date), ("notes", notes)] {
+        if let Some(v) = v {
+            parts.push(format!("{k}={}", encode(v)));
+        }
+    }
+    parts
+}
+
 fn failure_from(text: &str) -> Failure {
     let v: Value = serde_json::from_str(text).unwrap_or(Value::Null);
     let e = &v["error"];
@@ -839,6 +995,94 @@ fn run(cli: Cli) -> Result<(), Failure> {
                 }
                 None => {
                     std::io::stdout().write_all(&bytes).map_err(|e| Failure::new("internal", e.to_string()))?;
+                }
+            }
+            Ok(())
+        }
+        Cmd::Doc { action } => {
+            let cfg = load_config()?;
+            match action {
+                DocCmd::Add { file, vendor, amount, currency, date, notes } => {
+                    let bytes = std::fs::read(&file)
+                        .map_err(|e| Failure::new("invalid_input", format!("cannot read {}: {e}", file.display())))?;
+                    let name = file.file_name().and_then(|n| n.to_str()).unwrap_or("upload").to_string();
+                    let mut parts = vec![format!("filename={}", encode(&name)), "source=cli".to_string()];
+                    parts.extend(meta_query(&vendor, &amount, &currency, &date, &notes));
+                    let v = post_bytes(&cfg, &format!("/documents?{}", parts.join("&")), mime_for(&file), &bytes)?;
+                    print_value(&v, json_out);
+                }
+                DocCmd::List { status } => {
+                    let q = status.map(|s| format!("?status={}", encode(&s))).unwrap_or_default();
+                    print_value(&call(&cfg, "GET", &format!("/documents{q}"), None)?, json_out);
+                }
+                DocCmd::Meta { id, vendor, amount, currency, date, notes } => {
+                    let body = json!({"vendor": vendor, "amount": amount, "currency": currency, "date": date, "notes": notes});
+                    print_value(&call(&cfg, "POST", &format!("/documents/{id}/meta"), Some(&body))?, json_out);
+                }
+                DocCmd::Download { id, out } => {
+                    let (status, bytes) = request_bytes(&cfg, &format!("/documents/{id}/file"))?;
+                    if !(200..300).contains(&status) {
+                        return Err(failure_from(&String::from_utf8_lossy(&bytes)));
+                    }
+                    match out {
+                        Some(path) => {
+                            std::fs::write(&path, &bytes).map_err(|e| Failure::new("internal", e.to_string()))?;
+                            print_value(&json!({"status": "ok", "file": path.display().to_string(), "bytes": bytes.len()}), json_out);
+                        }
+                        None => std::io::stdout().write_all(&bytes).map_err(|e| Failure::new("internal", e.to_string()))?,
+                    }
+                }
+            }
+            Ok(())
+        }
+        Cmd::Bank { action } => {
+            let cfg = load_config()?;
+            match action {
+                BankCmd::Import { file } => {
+                    let bytes = std::fs::read(&file)
+                        .map_err(|e| Failure::new("invalid_input", format!("cannot read {}: {e}", file.display())))?;
+                    print_value(&post_bytes(&cfg, "/bank/import", "text/csv", &bytes)?, json_out);
+                }
+                BankCmd::List { status } => {
+                    let q = status.map(|s| format!("?status={}", encode(&s))).unwrap_or_default();
+                    print_value(&call(&cfg, "GET", &format!("/bank/transactions{q}"), None)?, json_out);
+                }
+                BankCmd::Match => print_value(&call(&cfg, "POST", "/bank/match", None)?, json_out),
+                BankCmd::Ignore { id } => {
+                    print_value(&call(&cfg, "POST", &format!("/bank/transactions/{id}/ignore"), None)?, json_out)
+                }
+                BankCmd::Book { id, description, debits, credits, docs, bank_account } => {
+                    let mut lines = vec![];
+                    for (list, side) in [(&debits, "debit"), (&credits, "credit")] {
+                        for item in list {
+                            let (acc, amount) = item.split_once('=').ok_or_else(|| {
+                                Failure::new("invalid_input", format!("expected ACCOUNT=AMOUNT, got '{item}'"))
+                            })?;
+                            let account: i64 = acc.trim().parse().map_err(|_| {
+                                Failure::new("invalid_input", format!("invalid account '{acc}'"))
+                            })?;
+                            lines.push(json!({"account": account, side: amount.trim()}));
+                        }
+                    }
+                    let body = json!({"description": description, "lines": lines, "documents": docs,
+                        "bank_account": bank_account});
+                    print_value(&call(&cfg, "POST", &format!("/bank/transactions/{id}/book"), Some(&body))?, json_out);
+                }
+            }
+            Ok(())
+        }
+        Cmd::Match { action } => {
+            let cfg = load_config()?;
+            match action {
+                MatchCmd::List { status } => {
+                    let q = status.map(|s| format!("?status={}", encode(&s))).unwrap_or_default();
+                    print_value(&call(&cfg, "GET", &format!("/matches{q}"), None)?, json_out);
+                }
+                MatchCmd::Confirm { id } => {
+                    print_value(&call(&cfg, "POST", &format!("/matches/{id}/confirm"), None)?, json_out)
+                }
+                MatchCmd::Decline { id } => {
+                    print_value(&call(&cfg, "POST", &format!("/matches/{id}/decline"), None)?, json_out)
                 }
             }
             Ok(())

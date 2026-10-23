@@ -148,10 +148,10 @@ pub(crate) fn audit(conn: &Connection, actor: &Actor, action: &str, object: &str
 }
 
 #[derive(Deserialize)]
-pub struct LineIn {
-    account: i64,
-    debit: Option<String>,
-    credit: Option<String>,
+pub(crate) struct LineIn {
+    pub(crate) account: i64,
+    pub(crate) debit: Option<String>,
+    pub(crate) credit: Option<String>,
 }
 
 /// Validate lines and return (account, debit, credit) in öre.
@@ -214,7 +214,7 @@ fn account_name(conn: &Connection, n: i64) -> String {
         .unwrap_or_default()
 }
 
-fn draft_view(conn: &Connection, id: i64) -> Result<Value, ApiError> {
+pub(crate) fn draft_view(conn: &Connection, id: i64) -> Result<Value, ApiError> {
     let d = conn
         .query_row(
             "SELECT event_date, description, counterparty, created_by, created_at FROM draft WHERE id = ?1",
@@ -240,8 +240,17 @@ fn draft_view(conn: &Connection, id: i64) -> Result<Value, ApiError> {
                    "debit": format_amount(d), "credit": format_amount(c)})
         })
         .collect();
+    let documents: Vec<Value> = conn
+        .prepare("SELECT d.id, d.filename FROM draft_document dd JOIN document d ON d.id = dd.document_id WHERE dd.draft_id = ?1 ORDER BY d.id")?
+        .query_map(params![id], |r| Ok(json!({"id": r.get::<_, i64>(0)?, "filename": r.get::<_, String>(1)?})))?
+        .filter_map(Result::ok)
+        .collect();
+    let bank_tx: Option<i64> = conn
+        .query_row("SELECT bank_transaction_id FROM draft_bank WHERE draft_id = ?1", params![id], |r| r.get(0))
+        .ok();
     Ok(json!({"id": id, "event_date": d.0, "description": d.1, "counterparty": d.2,
-              "created_by": d.3, "created_at": d.4, "lines": lines}))
+              "created_by": d.3, "created_at": d.4, "lines": lines, "documents": documents,
+              "bank_transaction_id": bank_tx}))
 }
 
 fn voucher_lines(conn: &Connection, voucher_id: i64) -> Result<Vec<(i64, i64, i64)>, ApiError> {
@@ -283,8 +292,14 @@ fn voucher_view(conn: &Connection, id: i64) -> Result<Value, ApiError> {
                    "debit": format_amount(d), "credit": format_amount(c)})
         })
         .collect();
+    let documents: Vec<Value> = conn
+        .prepare("SELECT d.id, d.filename FROM voucher_document vd JOIN document d ON d.id = vd.document_id WHERE vd.voucher_id = ?1 ORDER BY d.id")?
+        .query_map(params![id], |r| Ok(json!({"id": r.get::<_, i64>(0)?, "filename": r.get::<_, String>(1)?})))?
+        .filter_map(Result::ok)
+        .collect();
     let mut v = row;
     v["lines"] = json!(lines);
+    v["documents"] = json!(documents);
     Ok(v)
 }
 
@@ -433,26 +448,48 @@ pub async fn set_company(
 }
 
 #[derive(Deserialize)]
-pub struct NewDraft {
-    event_date: String,
-    description: String,
-    counterparty: Option<String>,
-    lines: Vec<LineIn>,
+pub(crate) struct NewDraft {
+    pub(crate) event_date: String,
+    pub(crate) description: String,
+    pub(crate) counterparty: Option<String>,
+    pub(crate) lines: Vec<LineIn>,
+    #[serde(default)]
+    pub(crate) documents: Vec<i64>,
+    #[serde(default)]
+    pub(crate) bank_transaction_id: Option<i64>,
 }
 
-pub async fn propose(
-    State(st): State<Shared>,
-    Extension(actor): Extension<Actor>,
-    Json(b): Json<NewDraft>,
-) -> ApiResult {
+/// Validate and store a draft voucher, with optional receipts and the bank transaction it books.
+pub(crate) fn create_draft(conn: &mut Connection, actor: &Actor, b: &NewDraft) -> Result<i64, ApiError> {
     check_date(&b.event_date)?;
     let description = clean_text(&b.description, "description", 200)?;
     if description.is_empty() {
         return Err(ApiError::invalid("description is empty"));
     }
     let counterparty = clean_text(b.counterparty.as_deref().unwrap_or(""), "counterparty", 100)?;
-    let mut conn = st.conn.lock().unwrap();
-    let lines = validate_lines(&conn, &b.lines)?;
+    let lines = validate_lines(conn, &b.lines)?;
+    for d in &b.documents {
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM document WHERE id = ?1", params![d], |r| r.get(0))?;
+        if n == 0 {
+            return Err(ApiError::invalid(format!("unknown document {d}")));
+        }
+    }
+    if let Some(txid) = b.bank_transaction_id {
+        let status: Option<String> = conn
+            .query_row("SELECT status FROM bank_transaction WHERE id = ?1", params![txid], |r| r.get(0))
+            .ok();
+        match status.as_deref() {
+            None => return Err(ApiError::invalid(format!("unknown bank transaction {txid}"))),
+            Some("new") => {}
+            Some(other) => {
+                return Err(ApiError::new(
+                    StatusCode::CONFLICT,
+                    "conflict",
+                    format!("bank transaction {txid} is already {other}"),
+                ));
+            }
+        }
+    }
     let tx = conn.transaction()?;
     tx.execute(
         "INSERT INTO draft(event_date, description, counterparty, created_by, created_at)
@@ -466,8 +503,25 @@ pub async fn propose(
             params![id, a, d, c],
         )?;
     }
-    audit(&tx, &actor, "draft.propose", &id.to_string(), &description)?;
+    for d in &b.documents {
+        tx.execute("INSERT OR IGNORE INTO draft_document(draft_id, document_id) VALUES (?1, ?2)", params![id, d])?;
+    }
+    if let Some(txid) = b.bank_transaction_id {
+        tx.execute("INSERT INTO draft_bank(draft_id, bank_transaction_id) VALUES (?1, ?2)", params![id, txid])
+            .map_err(|_| ApiError::new(StatusCode::CONFLICT, "conflict", "that bank transaction already has a draft"))?;
+    }
+    audit(&tx, actor, "draft.propose", &id.to_string(), &description)?;
     tx.commit()?;
+    Ok(id)
+}
+
+pub async fn propose(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    Json(b): Json<NewDraft>,
+) -> ApiResult {
+    let mut conn = st.conn.lock().unwrap();
+    let id = create_draft(&mut conn, &actor, &b)?;
     Ok(Json(json!({"draft": draft_view(&conn, id)?})))
 }
 
@@ -508,6 +562,18 @@ pub async fn approve(
         return Err(ApiError::invalid("draft does not balance"));
     }
     let vid = post_voucher(&tx, &event_date, &description, &counterparty, &created_by, actor.name.as_str(), &created_at, None, &lines)?;
+    tx.execute(
+        "INSERT INTO voucher_document(voucher_id, document_id)
+         SELECT ?1, document_id FROM draft_document WHERE draft_id = ?2",
+        params![vid, id],
+    )?;
+    let bank_tx: Option<i64> = tx
+        .query_row("SELECT bank_transaction_id FROM draft_bank WHERE draft_id = ?1", params![id], |r| r.get(0))
+        .ok();
+    if let Some(txid) = bank_tx {
+        tx.execute("INSERT INTO bank_booking(bank_transaction_id, voucher_id) VALUES (?1, ?2)", params![txid, vid])?;
+        tx.execute("UPDATE bank_transaction SET status = 'booked' WHERE id = ?1", params![txid])?;
+    }
     tx.execute("DELETE FROM draft WHERE id = ?1", params![id])?;
     audit(&tx, &actor, "voucher.approve", &vid.to_string(), &format!("draft {id}"))?;
     tx.commit()?;

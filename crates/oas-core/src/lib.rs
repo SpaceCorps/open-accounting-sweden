@@ -212,6 +212,208 @@ pub fn sie_quote(s: &str) -> String {
     format!("\"{}\"", cleaned.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
+// ---------------------------------------------------------------------------------------------
+// Bank statement import
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BankRow {
+    pub date: String,
+    /// Signed amount in öre: money in is positive, money out is negative.
+    pub amount: i64,
+    pub currency: String,
+    pub counterparty: String,
+    pub reference: String,
+}
+
+/// Parse a signed amount such as "-1 250,50", "1250.5" or "−99" into öre.
+pub fn parse_signed_amount(input: &str) -> Result<i64, String> {
+    let cleaned: String = input
+        .trim()
+        .replace(['\u{2212}', '\u{2013}'], "-")
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '\u{a0}')
+        .collect();
+    let (neg, rest) = match cleaned.strip_prefix('-') {
+        Some(r) => (true, r.to_string()),
+        None => (false, cleaned.trim_start_matches('+').to_string()),
+    };
+    // A dot or comma followed by exactly three digits and then another separator is a thousands mark.
+    let value = parse_amount(&rest)?;
+    Ok(if neg { -value } else { value })
+}
+
+fn normalise_date(s: &str) -> Option<String> {
+    let t = s.trim();
+    for fmt in ["%Y-%m-%d", "%Y/%m/%d", "%d.%m.%Y", "%d/%m/%Y", "%Y%m%d"] {
+        if let Ok(d) = NaiveDate::parse_from_str(t.get(..10.min(t.len())).unwrap_or(t), fmt)
+            .or_else(|_| NaiveDate::parse_from_str(t, fmt))
+        {
+            return Some(d.format("%Y-%m-%d").to_string());
+        }
+    }
+    None
+}
+
+fn split_csv_line(line: &str, delim: char) -> Vec<String> {
+    let mut out = vec![];
+    let mut cur = String::new();
+    let mut quoted = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' if quoted && chars.peek() == Some(&'"') => {
+                cur.push('"');
+                chars.next();
+            }
+            '"' => quoted = !quoted,
+            c if c == delim && !quoted => out.push(std::mem::take(&mut cur)),
+            c => cur.push(c),
+        }
+    }
+    out.push(cur);
+    out.into_iter().map(|f| f.trim().to_string()).collect()
+}
+
+fn find_col(header: &[String], names: &[&str]) -> Option<usize> {
+    header.iter().position(|h| {
+        let h = h.trim().trim_start_matches('\u{feff}').to_lowercase();
+        names.iter().any(|n| h == *n)
+    })
+}
+
+/// Parse a bank statement CSV. The delimiter (comma or semicolon) and common English and Swedish
+/// column names are detected: date, amount, text or counterparty, reference, currency. Rows with an
+/// unreadable date or amount are reported in the second return value.
+pub fn parse_bank_csv(text: &str) -> Result<(Vec<BankRow>, Vec<String>), String> {
+    let mut lines = text.lines().filter(|l| !l.trim().is_empty());
+    let first = lines.next().ok_or("the file is empty")?;
+    let delim = if first.matches(';').count() > first.matches(',').count() { ';' } else { ',' };
+    let header = split_csv_line(first, delim);
+    let date_c = find_col(&header, &["date", "datum", "bokföringsdatum", "bokforingsdatum", "booking date", "transaction date", "transaktionsdatum"])
+        .ok_or("no date column found (expected date, datum or bokföringsdatum)")?;
+    let amount_c = find_col(&header, &["amount", "belopp", "sum", "summa"])
+        .ok_or("no amount column found (expected amount or belopp)")?;
+    let text_c = find_col(&header, &["counterparty", "text", "description", "beskrivning", "mottagare", "name", "namn", "merchant"]);
+    let ref_c = find_col(&header, &["reference", "referens", "message", "meddelande", "note"]);
+    let cur_c = find_col(&header, &["currency", "valuta"]);
+    let mut rows = vec![];
+    let mut errors = vec![];
+    for (n, line) in lines.enumerate() {
+        let f = split_csv_line(line, delim);
+        let get = |i: Option<usize>| i.and_then(|i| f.get(i)).cloned().unwrap_or_default();
+        let Some(date) = normalise_date(&get(Some(date_c))) else {
+            errors.push(format!("row {}: unreadable date '{}'", n + 2, get(Some(date_c))));
+            continue;
+        };
+        let Ok(amount) = parse_signed_amount(&get(Some(amount_c))) else {
+            errors.push(format!("row {}: unreadable amount '{}'", n + 2, get(Some(amount_c))));
+            continue;
+        };
+        let currency = {
+            let c = get(cur_c).to_uppercase();
+            if c.len() == 3 { c } else { "SEK".to_string() }
+        };
+        rows.push(BankRow {
+            date,
+            amount,
+            currency,
+            counterparty: get(text_c),
+            reference: get(ref_c),
+        });
+    }
+    Ok((rows, errors))
+}
+
+// ---------------------------------------------------------------------------------------------
+// Receipt to bank transaction matching
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchScores {
+    pub total: f64,
+    pub name: f64,
+    pub amount: f64,
+    pub date: f64,
+    pub currency: f64,
+}
+
+fn tokens(s: &str) -> Vec<String> {
+    s.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| t.chars().count() >= 3)
+        .map(String::from)
+        .collect()
+}
+
+/// How alike a receipt's vendor and a bank line's text are, from 0 to 1.
+pub fn name_score(vendor: &str, bank_text: &str) -> f64 {
+    let a = tokens(vendor);
+    let b = tokens(bank_text);
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    let shared = a.iter().filter(|t| b.iter().any(|u| u == *t || u.contains(t.as_str()) || t.contains(u.as_str()))).count();
+    (shared as f64 / a.len().min(b.len()) as f64).min(1.0)
+}
+
+/// Amount closeness from 0 to 1 using the relative difference of the absolute amounts.
+pub fn amount_score(tx_ore: i64, doc_ore: i64) -> f64 {
+    let (t, d) = (tx_ore.abs() as f64, doc_ore.abs() as f64);
+    if t == 0.0 || d == 0.0 {
+        return 0.0;
+    }
+    let rel = (t - d).abs() / t.max(d);
+    match rel {
+        r if r <= 0.0 => 1.0,
+        r if r <= 0.005 => 0.97,
+        r if r <= 0.02 => 0.85,
+        r if r <= 0.05 => 0.6,
+        _ => 0.0,
+    }
+}
+
+/// Date closeness from 0 to 1 by the number of days between the receipt and the bank booking.
+pub fn date_score(tx_date: &str, doc_date: &str) -> f64 {
+    let (Ok(a), Ok(b)) = (
+        NaiveDate::parse_from_str(tx_date, "%Y-%m-%d"),
+        NaiveDate::parse_from_str(doc_date, "%Y-%m-%d"),
+    ) else {
+        return 0.0;
+    };
+    match (a - b).num_days().abs() {
+        0..=3 => 1.0,
+        4..=7 => 0.8,
+        8..=14 => 0.5,
+        15..=30 => 0.2,
+        _ => 0.0,
+    }
+}
+
+/// Score a receipt against a bank transaction. Returns None when the amount does not fit at all,
+/// because an amount mismatch is never worth a suggestion.
+#[allow(clippy::too_many_arguments)]
+pub fn score_match(
+    tx_amount: i64,
+    tx_currency: &str,
+    tx_date: &str,
+    tx_text: &str,
+    doc_amount: Option<i64>,
+    doc_currency: &str,
+    doc_date: Option<&str>,
+    doc_vendor: &str,
+) -> Option<MatchScores> {
+    let amount = amount_score(tx_amount, doc_amount?);
+    if amount == 0.0 {
+        return None;
+    }
+    let currency = if tx_currency.eq_ignore_ascii_case(doc_currency) { 1.0 } else { 0.3 };
+    let date = doc_date.map(|d| date_score(tx_date, d)).unwrap_or(0.4);
+    let name = name_score(doc_vendor, tx_text);
+    let total = 0.45 * amount + 0.25 * name + 0.2 * date + 0.1 * currency;
+    Some(MatchScores { total, name, amount, date, currency })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,5 +500,56 @@ mod tests {
         assert_eq!(csv_field("a,b"), "\"a,b\"");
         assert_eq!(csv_field("say \"hi\""), "\"say \"\"hi\"\"\"");
         assert_eq!(csv_field("plain"), "plain");
+    }
+
+    #[test]
+    fn signed_amounts() {
+        assert_eq!(parse_signed_amount("-1 250,50"), Ok(-125050));
+        assert_eq!(parse_signed_amount("\u{2212}99"), Ok(-9900));
+        assert_eq!(parse_signed_amount("+12.5"), Ok(1250));
+        assert!(parse_signed_amount("x").is_err());
+    }
+
+    #[test]
+    fn parses_semicolon_swedish_csv() {
+        let csv = "Bokföringsdatum;Text;Belopp;Saldo\n2026-10-21;AMAZON WEB SERVICES;-1 250,00;10 000,00\n2026-10-22;Kund AB faktura 12;12 500,00;22 500,00\nbad;x;1;1\n";
+        let (rows, errors) = parse_bank_csv(csv).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].amount, -125000);
+        assert_eq!(rows[0].counterparty, "AMAZON WEB SERVICES");
+        assert_eq!(rows[1].amount, 1250000);
+        assert_eq!(errors.len(), 1);
+    }
+
+    #[test]
+    fn parses_comma_csv_with_quotes() {
+        let csv = "date,description,amount,currency\n2026-10-23,\"GitHub, Inc\",-40.00,USD\n";
+        let (rows, _) = parse_bank_csv(csv).unwrap();
+        assert_eq!(rows[0].counterparty, "GitHub, Inc");
+        assert_eq!(rows[0].currency, "USD");
+        assert_eq!(rows[0].amount, -4000);
+    }
+
+    #[test]
+    fn csv_needs_date_and_amount() {
+        assert!(parse_bank_csv("a,b\n1,2\n").is_err());
+        assert!(parse_bank_csv("").is_err());
+    }
+
+    #[test]
+    fn matching_prefers_same_amount_name_and_date() {
+        let good = score_match(-125000, "SEK", "2026-10-21", "AMAZON WEB SERVICES EMEA", Some(125000), "SEK", Some("2026-10-20"), "Amazon Web Services").unwrap();
+        let weak = score_match(-125000, "SEK", "2026-10-21", "SPOTIFY", Some(125000), "SEK", Some("2026-09-01"), "Telia").unwrap();
+        assert!(good.total > 0.9, "{good:?}");
+        assert!(weak.total < good.total);
+        assert!(score_match(-125000, "SEK", "2026-10-21", "x", Some(50000), "SEK", None, "x").is_none());
+        assert!(score_match(-125000, "SEK", "2026-10-21", "x", None, "SEK", None, "x").is_none());
+    }
+
+    #[test]
+    fn name_score_handles_partial_overlap() {
+        assert!(name_score("GitHub", "GITHUB INC SAN FRANCISCO") > 0.9);
+        assert_eq!(name_score("", "anything"), 0.0);
+        assert_eq!(name_score("Telia", "Spotify"), 0.0);
     }
 }

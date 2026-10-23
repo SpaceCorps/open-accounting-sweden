@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
-use axum::extract::{Query, State};
+use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::{HeaderValue, Request, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Response};
@@ -22,6 +22,7 @@ use serde_json::{Value, json};
 use subtle::ConstantTimeEq;
 
 mod auth;
+mod inbox;
 mod ledger;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -53,6 +54,7 @@ struct AppState {
     agent_token: Option<String>,
     limiter: auth::Limiter,
     dummy_hash: String,
+    docs_dir: std::path::PathBuf,
 }
 
 type Shared = Arc<AppState>;
@@ -127,6 +129,7 @@ fn open_db(path: &str) -> Result<Connection, rusqlite::Error> {
     conn.execute_batch(SCHEMA)?;
     conn.execute_batch(ledger::SCHEMA)?;
     conn.execute_batch(auth::SCHEMA)?;
+    conn.execute_batch(inbox::SCHEMA)?;
     ledger::seed(&conn)?;
     for (name, message) in [
         ("meeting", "Meeting: {topic}"),
@@ -661,6 +664,11 @@ async fn main() {
             std::process::exit(2);
         }
     }
+    // Receipts live next to the database unless OAS_DATA_DIR says otherwise.
+    let data_dir = std::env::var("OAS_DATA_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| {
+        std::path::Path::new(&db_path).parent().map(|p| p.to_path_buf()).unwrap_or_default()
+    });
+    let docs_dir = data_dir.join("documents");
     let dummy_hash = auth::hash_password("dummy password used only for timing").unwrap_or_default();
     let state: Shared = Arc::new(AppState {
         conn: Mutex::new(conn),
@@ -668,6 +676,7 @@ async fn main() {
         agent_token,
         limiter: auth::Limiter::default(),
         dummy_hash,
+        docs_dir,
     });
 
     let api = Router::new()
@@ -696,6 +705,18 @@ async fn main() {
         .route("/ledger/verify", get(ledger::verify))
         .route("/audit", get(ledger::audit_list))
         .route("/export/sie", get(ledger::export_sie))
+        .route("/documents", get(inbox::list_documents).post(inbox::upload_document))
+        .route("/documents/{id}/file", get(inbox::download_document))
+        .route("/documents/{id}/meta", post(inbox::set_meta))
+        .route("/bank/import", post(inbox::import_bank))
+        .route("/bank/transactions", get(inbox::list_transactions))
+        .route("/bank/transactions/{id}/ignore", post(inbox::ignore_tx))
+        .route("/bank/transactions/{id}/book", post(inbox::book_tx))
+        .route("/bank/match", post(inbox::run_match))
+        .route("/matches", get(inbox::list_matches))
+        .route("/matches/{id}/confirm", post(inbox::confirm_match))
+        .route("/matches/{id}/decline", post(inbox::decline_match))
+        .layer(DefaultBodyLimit::max(26 * 1024 * 1024))
         .layer(middleware::from_fn_with_state(state.clone(), auth));
 
     // OAS_WEB_DIR points at the built web app (web/dist). Without it a small fallback page is served.

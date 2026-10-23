@@ -86,3 +86,48 @@ export interface Report {
   entries: number; total_hours: number; by_project: Record<string, number>;
   by_activity: Record<string, number>; by_day: Record<string, number>;
 }
+
+export interface Doc {
+  id: number; filename: string; mime: string; size: number; uploaded_by: string; uploaded_at: string;
+  source: string; vendor: string; amount: string | null; currency: string; date: string | null;
+  notes: string; vouchers: string[]; drafts: number[]; status: "unlinked" | "draft" | "booked";
+  duplicate?: boolean;
+}
+export interface BankTx {
+  id: number; date: string; amount: string; currency: string; counterparty: string; reference: string;
+  status: "new" | "booked" | "ignored"; voucher: string | null; draft: number | null; pending_matches: number;
+}
+export interface MatchItem {
+  id: number; status: string; score: number;
+  scores: { name: number; amount: number; date: number; currency: number };
+  transaction: BankTx; document: Doc;
+}
+
+async function rawUpload<T>(path: string, contentType: string, body: BodyInit): Promise<T> {
+  const res = await fetch("/api" + path, {
+    method: "POST",
+    headers: { "Content-Type": contentType, Authorization: `Bearer ${getToken()}` },
+    body,
+  });
+  if (res.status === 401) {
+    setToken(null);
+    window.dispatchEvent(new Event("oas-unauthorized"));
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new ApiError(res.status, data.error?.code ?? "error", data.error?.message ?? res.statusText);
+  }
+  return data as T;
+}
+
+export function uploadDocument(file: File, meta: Record<string, string> = {}) {
+  const q = new URLSearchParams({ filename: file.name, source: "web" });
+  for (const [k, v] of Object.entries(meta)) if (v) q.set(k, v);
+  return rawUpload<{ document: Doc }>(`/documents?${q}`, file.type || "application/octet-stream", file);
+}
+
+export function importBankCsv(file: File) {
+  return rawUpload<{ imported: number; duplicates: number; errors: string[]; new_suggestions: number }>(
+    "/bank/import", "text/csv", file,
+  );
+}

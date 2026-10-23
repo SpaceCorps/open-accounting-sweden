@@ -2,7 +2,7 @@
 
 Self-hostable, agentic-first bookkeeping for Swedish small companies (aktiebolag). It keeps the books and the receipts, and prepares every number and document needed for the statutory reports, so an agent (or a human) can review and submit them on time.
 
-> Status: pre-alpha. Working today: time tracking (projects, activity types, CSV export), an append-only double-entry ledger with propose-and-approve postings, a hash-chained integrity check, SIE 4 export, a trial balance, the `oas` CLI and a web panel. Not built yet: VAT, payroll/AGI, annual report, receipts archive, bank import. Nothing here is tax or legal advice. The company owner stays legally responsible for the books and filings.
+> Status: pre-alpha. Working today: time tracking (projects, activity types, CSV export), an append-only double-entry ledger with propose-and-approve postings and a hash-chained integrity check, a receipts archive (web, CLI or agent upload, kept unchanged), bank statement import (CSV), explainable receipt-to-bank-line matching, booking bank lines as draft vouchers, SIE 4 export, a trial balance, the `oas` CLI and a web panel. Not built yet: VAT return pack, payroll/AGI, annual report, live bank feeds. Nothing here is tax or legal advice. The company owner stays legally responsible for the books and filings.
 
 ## Try it
 
