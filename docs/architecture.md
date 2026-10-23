@@ -51,6 +51,9 @@ These follow the primary-source requirements in the report (BFL 5 kap., BFNAR 20
 | `filing_pack` | type, period, status (draft, ready, signed, filed), generated files, supporting documents, hash |
 | `deadline` | type, period, due date, source, status |
 | `audit_log` | actor (human or agent token), action, object, timestamp, request id |
+| `project` | name, aliases, client, status (active, archived), default activity |
+| `activity_type` | name (meeting, building, strategizing, ...), default message template, colour |
+| `time_entry` | date, start, end, timezone, activity type, project, message, created by, source (cli, web, agent) |
 
 ## Reporting packs
 
@@ -75,10 +78,33 @@ oas vat pack --period 2026-Q4
 oas agi pack --month 2026-11
 oas year pack --year 2026
 oas deadlines --next 30d
+oas time log --activity meeting --project acme --date 2026-10-21 --from 11:00 --to 12:00
+oas time start --activity building --project acme
+oas time stop
+oas time report --week [--project acme] [--activity meeting]
+oas time export --from 2026-10-01 --to 2026-10-31 --format csv
+oas project add "Acme" --alias acme
+oas project list
+oas activity add strategizing --message "Strategy: {topic}"
 oas agent-readme [--json]
 ```
 
 Conventions follow the other SpaceCorps CLIs: multi-account `--account`, YAML by default, `--json`, structured error envelope on stderr with stable exit codes, no empty stdout.
+
+## Time tracking
+
+Working hours are a separate module. They are not part of the statutory bookkeeping, but the hours can later feed consulting invoices and the ledger.
+
+- **Activity types** are user-defined (meeting, building, strategizing and so on). Each has a default message template that pre-fills the entry's note.
+- **Entries** can be logged afterwards (date, start, end) or run as a live timer (`start` and `stop`). Times are stored as UTC plus the timezone, defaulting to Europe/Stockholm. Overlapping entries are refused by default.
+- **Projects** are created with a name and optional aliases and a client. They can be archived but not deleted once they have entries.
+- **Project resolution.** When an entry has no project, the system asks for one. When a name is given, it is matched against project names and aliases (case-insensitive, then fuzzy).
+  - One clear match: use it.
+  - Several close matches: ask which one.
+  - No match: ask whether to create a new project with that name, and create it only after confirmation.
+  - Non-interactive callers such as agents never get a prompt. They get an `invalid_input` error with a `project_required` or `project_not_found` code and the closest matches, so the agent can ask the human or retry with a confirmed `--create-project` flag.
+- **Overview** is available in the web panel and in `oas time report`: totals per day, week and month, grouped by project and by activity type.
+- **CSV export** (`oas time export`, and a download in the web panel) has one row per entry: date, start, end, duration in hours, timezone, project, client, activity, message. It can be filtered by date range, project and activity. Values that start with `=`, `+`, `-` or `@` are escaped so spreadsheets don't run them as formulas.
 
 ## Security
 
@@ -95,7 +121,7 @@ One container for the server and one for Postgres, deployable on Sliplane or any
 ## Build order
 
 1. Ledger, voucher rules, document archive and integrity checks, with SIE4 export and a generated system description.
-2. CLI with auth, inbox and the propose-and-approve workflow.
+2. CLI with auth, inbox and the propose-and-approve workflow, plus time tracking (activities, projects, CSV export), which is also the first thing worth deploying to Sliplane.
 3. VAT logic and pack, including reverse charge.
 4. Payroll and AGI XML.
 5. Year-end: closing, K2 mapping, SRU and iXBRL.
