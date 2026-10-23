@@ -1,5 +1,5 @@
 import {
-  Badge, DataTable, Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
+  Badge, DataTable, Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle,
   type DataTableColumn, type DataTableRowAction,
 } from "@spacecorps/components/ui";
 import { Check, Eye, Undo2, X } from "lucide-react";
@@ -29,9 +29,11 @@ export function VoucherDialog({ voucher, onClose }: { voucher: Voucher | null; o
                 {voucher.corrects ? ` Reverses voucher #${voucher.corrects}.` : ""}
               </DialogDescription>
             </DialogHeader>
+<DialogBody>
             <DataTable columns={lineColumns} rows={voucher.lines} getRowId={(_, i) => String(i)} paginated={false} />
             <p className="oas-muted oas-mono">hash {voucher.hash.slice(0, 16)}...</p>
-          </>
+</DialogBody>
+</>
         ) : null}
       </DialogContent>
     </Dialog>
@@ -166,6 +168,7 @@ export const entryColumns: DataTableColumn<TimeEntry>[] = [
   { name: "start", header: "Start", width: "80px" },
   { name: "end", header: "End", width: "80px", accessor: (e) => e.end ?? "", cell: (v, e) => (e.running ? <Badge variant="info">running</Badge> : (v as string)) },
   { name: "hours", header: "Hours", align: "Right", width: "90px", cell: (v) => (v as number).toFixed(2) },
+  { name: "amount", header: "Amount", align: "Right", accessor: (e) => (e.amount ? `${e.amount} ${e.currency}` : "") },
   { name: "project", header: "Project" },
   { name: "activity", header: "Activity", cell: (v) => <Badge variant="secondary">{v as string}</Badge> },
   { name: "message", header: "Message" },

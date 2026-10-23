@@ -1,5 +1,5 @@
 import {
-  Badge, Button, DataTable, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader,
+  Badge, Button, DataTable, Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader,
   DialogTitle, Input, Tabs, TabsContent, TabsList, TabsTrigger,
   type DataTableColumn, type DataTableRowAction,
 } from "@spacecorps/components/ui";
@@ -39,11 +39,13 @@ function AddEmployee({ open, onOpenChange, onDone }: { open: boolean; onOpenChan
           <DialogTitle>Add employee</DialogTitle>
           <DialogDescription>Include yourself if you take a salary. The identity number is kept for the AGI file and shown only to admins.</DialogDescription>
         </DialogHeader>
+<DialogBody>
         <div className="oas-form">
           <TextField label="Name" value={name} onChange={setName} />
           <TextField label="Personnummer" value={identity} onChange={setIdentity} placeholder="YYYYMMDDNNNC" hint="12 digits; a samordningsnummer also works" autoComplete="off" />
         </div>
-        <DialogFooter>
+</DialogBody>
+<DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button disabled={!name.trim() || identity.replace(/\D/g, "").length !== 12} onClick={() => void save()}>Add</Button>
         </DialogFooter>
@@ -92,6 +94,7 @@ function NewRun({ open, onOpenChange, employees, onDone }: { open: boolean; onOp
           <DialogTitle>New pay run</DialogTitle>
           <DialogDescription>Gross cash salary only. Take the preliminary tax from Skatteverket's tax table, or enter a percentage. Leave gross empty to skip a person this month.</DialogDescription>
         </DialogHeader>
+<DialogBody>
         <div className="oas-form">
           <div className="oas-form-row">
             <TextField label="Period" value={period} onChange={setPeriod} placeholder="2026-10" />
@@ -114,6 +117,7 @@ function NewRun({ open, onOpenChange, employees, onDone }: { open: boolean; onOp
             </>
           )}
         </div>
+        </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button disabled={filled.length === 0 || filled.some((r) => r.tax.trim() === "" && r.percent.trim() === "")} onClick={() => void save()}>Create pay run</Button>
@@ -144,8 +148,10 @@ function RunDialog({ run, onClose }: { run: Run | null; onClose: () => void }) {
                 Paid {run.pay_date}. Gross {run.totals.gross}, tax {run.totals.tax}, contributions {run.totals.contributions}; {run.totals.to_skattekonto} goes to the tax account. AGI due {run.agi_due ?? "?"} (unverified).
               </DialogDescription>
             </DialogHeader>
+<DialogBody>
             <DataTable columns={cols} rows={run.lines} getRowId={(l) => String(l.employee_id)} paginated={false} />
-          </>
+</DialogBody>
+</>
         ) : null}
       </DialogContent>
     </Dialog>
@@ -364,8 +370,10 @@ export function PayrollPage({ me }: { me: Me }) {
       <Dialog open={editRate !== null} onOpenChange={(o) => !o && setEditRate(null)}>
         <DialogContent>
           <DialogHeader><DialogTitle>Change value</DialogTitle><DialogDescription>{editRate?.label}. It stays unverified until you check it.</DialogDescription></DialogHeader>
+<DialogBody>
           <TextField label="Value" value={rateValue} onChange={setRateValue} />
-          <DialogFooter><Button variant="outline" onClick={() => setEditRate(null)}>Cancel</Button><Button onClick={() => void saveRate()}>Save</Button></DialogFooter>
+</DialogBody>
+<DialogFooter><Button variant="outline" onClick={() => setEditRate(null)}>Cancel</Button><Button onClick={() => void saveRate()}>Save</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </>

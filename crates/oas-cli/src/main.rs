@@ -36,7 +36,7 @@ oas time stop
 oas time list [--from D] [--to D] [--project P] [--activity A]
 oas time report [--week | --month | --from D --to D] [--project P] [--activity A]
 oas time export [--week | --month | --from D --to D] [--project P] [--activity A] [--out FILE]
-oas project add NAME [--alias A]... [--client C] | list
+oas project add NAME [--alias A]... [--client C] [--hourly SEK | --fixed SEK] | list | rate PROJECT --hourly SEK | --fixed SEK | --clear   (rates are admin only)
 oas activity add NAME [--message TEMPLATE] | list
 oas company set NAME [--org-number N] [--contact-name N --contact-phone P --contact-email E] | show   (the AGI file needs the contact)
 oas account list | add NUMBER NAME --kind T|S|K|I
@@ -566,8 +566,31 @@ enum ProjectCmd {
         aliases: Vec<String>,
         #[arg(long)]
         client: Option<String>,
+        /// Hourly rate in SEK (admin only)
+        #[arg(long, conflicts_with = "fixed")]
+        hourly: Option<String>,
+        /// Fixed fee in SEK (admin only)
+        #[arg(long)]
+        fixed: Option<String>,
+        /// Currency, default SEK
+        #[arg(long)]
+        currency: Option<String>,
     },
     List,
+    /// Set or clear a project's hourly rate or fixed fee (admin only)
+    Rate {
+        /// Project name or alias
+        project: String,
+        #[arg(long, conflicts_with_all = ["fixed", "clear"])]
+        hourly: Option<String>,
+        #[arg(long, conflicts_with = "clear")]
+        fixed: Option<String>,
+        #[arg(long)]
+        currency: Option<String>,
+        /// Remove the rate
+        #[arg(long)]
+        clear: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1337,9 +1360,38 @@ fn run(cli: Cli) -> Result<(), Failure> {
         Cmd::Project { action } => {
             let cfg = load_config()?;
             match action {
-                ProjectCmd::Add { name, aliases, client } => {
-                    let body = json!({"name": name, "aliases": aliases, "client": client});
+                ProjectCmd::Add { name, aliases, client, hourly, fixed, currency } => {
+                    let (rate_type, rate) = match (hourly, fixed) {
+                        (Some(h), _) => (Some("hourly"), Some(h)),
+                        (None, Some(f)) => (Some("fixed"), Some(f)),
+                        _ => (None, None),
+                    };
+                    let body = json!({"name": name, "aliases": aliases, "client": client,
+                        "rate_type": rate_type, "rate": rate, "currency": currency});
                     print_value(&call(&cfg, "POST", "/projects", Some(&body))?, json_out);
+                }
+                ProjectCmd::Rate { project, hourly, fixed, currency, clear } => {
+                    let projects = call(&cfg, "GET", "/projects", None)?;
+                    let wanted = project.trim().to_lowercase();
+                    let found = projects["projects"].as_array().and_then(|list| {
+                        list.iter().find(|p| {
+                            p["name"].as_str().is_some_and(|n| n.to_lowercase() == wanted)
+                                || p["aliases"].as_array().is_some_and(|a| a.iter().any(|x| x.as_str().is_some_and(|x| x.to_lowercase() == wanted)))
+                        })
+                    });
+                    let Some(p) = found else {
+                        let names: Vec<String> = projects["projects"].as_array().map(|l| l.iter().filter_map(|p| p["name"].as_str().map(String::from)).collect()).unwrap_or_default();
+                        return Err(Failure { code: "project_not_found".into(), message: format!("no project named '{project}'"), projects: names });
+                    };
+                    let id = p["id"].as_i64().unwrap_or(0);
+                    let (rate_type, rate) = match (hourly, fixed, clear) {
+                        (Some(h), _, false) => ("hourly", Some(h)),
+                        (None, Some(f), false) => ("fixed", Some(f)),
+                        (None, None, true) => ("none", None),
+                        _ => return Err(Failure::new("invalid_input", "give --hourly AMOUNT, --fixed AMOUNT or --clear")),
+                    };
+                    let body = json!({"rate_type": rate_type, "rate": rate, "currency": currency});
+                    print_value(&call(&cfg, "POST", &format!("/projects/{id}/rate"), Some(&body))?, json_out);
                 }
                 ProjectCmd::List => print_value(&call(&cfg, "GET", "/projects", None)?, json_out),
             }

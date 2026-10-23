@@ -20,6 +20,11 @@ pub struct Project {
     pub aliases: Vec<String>,
     pub client: Option<String>,
     pub archived: bool,
+    /// "none", "hourly" or "fixed".
+    pub rate_type: String,
+    /// The hourly rate or the fixed fee as a decimal string, when one is set.
+    pub rate: Option<String>,
+    pub currency: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -35,6 +40,11 @@ pub struct TimeEntry {
     pub activity: String,
     pub message: String,
     pub running: bool,
+    pub currency: String,
+    /// The project's hourly rate, when it has one.
+    pub rate: Option<String>,
+    /// Hours times the hourly rate. Empty for projects without an hourly rate.
+    pub amount: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -527,6 +537,9 @@ mod tests {
             aliases: aliases.iter().map(|s| s.to_string()).collect(),
             client: None,
             archived,
+            rate_type: "none".into(),
+            rate: None,
+            currency: "SEK".into(),
         }
     }
 

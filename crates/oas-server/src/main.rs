@@ -9,7 +9,7 @@ use axum::http::{HeaderValue, Request, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use oas_core::{
@@ -109,7 +109,10 @@ CREATE TABLE IF NOT EXISTS project(
   name TEXT NOT NULL UNIQUE COLLATE NOCASE,
   aliases TEXT NOT NULL DEFAULT '[]',
   client TEXT,
-  archived INTEGER NOT NULL DEFAULT 0
+  archived INTEGER NOT NULL DEFAULT 0,
+  rate_type TEXT NOT NULL DEFAULT 'none',
+  rate INTEGER,
+  currency TEXT NOT NULL DEFAULT 'SEK'
 );
 CREATE TABLE IF NOT EXISTS time_entry(
   id INTEGER PRIMARY KEY,
@@ -129,6 +132,20 @@ fn open_db(path: &str) -> Result<Connection, rusqlite::Error> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.execute_batch(SCHEMA)?;
+    for (col, decl) in [
+        ("rate_type", "TEXT NOT NULL DEFAULT 'none'"),
+        ("rate", "INTEGER"),
+        ("currency", "TEXT NOT NULL DEFAULT 'SEK'"),
+    ] {
+        let has: i64 = conn.query_row(
+            &format!("SELECT COUNT(*) FROM pragma_table_info('project') WHERE name = '{col}'"),
+            [],
+            |r| r.get(0),
+        )?;
+        if has == 0 {
+            conn.execute_batch(&format!("ALTER TABLE project ADD COLUMN {col} {decl}"))?;
+        }
+    }
     conn.execute_batch(ledger::SCHEMA)?;
     conn.execute_batch(auth::SCHEMA)?;
     conn.execute_batch(inbox::SCHEMA)?;
@@ -206,7 +223,7 @@ async fn security_headers(State(has_ui): State<bool>, req: Request<Body>, next: 
 
 fn load_projects(conn: &Connection) -> Result<Vec<Project>, ApiError> {
     let mut stmt =
-        conn.prepare("SELECT id, name, aliases, client, archived FROM project ORDER BY name")?;
+        conn.prepare("SELECT id, name, aliases, client, archived, rate_type, rate, currency FROM project ORDER BY name")?;
     let rows = stmt.query_map([], |r| {
         let aliases: String = r.get(2)?;
         Ok(Project {
@@ -215,6 +232,9 @@ fn load_projects(conn: &Connection) -> Result<Vec<Project>, ApiError> {
             aliases: serde_json::from_str(&aliases).unwrap_or_default(),
             client: r.get(3)?,
             archived: r.get::<_, i64>(4)? != 0,
+            rate_type: r.get(5)?,
+            rate: r.get::<_, Option<i64>>(6)?.map(oas_core::format_amount),
+            currency: r.get(7)?,
         })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
@@ -343,7 +363,7 @@ fn check_overlap(
 
 fn load_entries(conn: &Connection) -> Result<Vec<TimeEntry>, ApiError> {
     let mut stmt = conn.prepare(
-        "SELECT e.id, e.start_utc, e.end_utc, e.tz, e.activity, e.message, p.name, p.client
+        "SELECT e.id, e.start_utc, e.end_utc, e.tz, e.activity, e.message, p.name, p.client, p.rate_type, p.rate, p.currency
          FROM time_entry e JOIN project p ON p.id = e.project_id
          ORDER BY e.start_utc",
     )?;
@@ -356,18 +376,25 @@ fn load_entries(conn: &Connection) -> Result<Vec<TimeEntry>, ApiError> {
         let running = end_s.is_none();
         let end = end_s.as_deref().map(parse_utc);
         let ls = start.with_timezone(&tz);
+        let hours = hours_between(start, end.unwrap_or(now));
+        let rate_type: String = r.get(8)?;
+        let rate: Option<i64> = r.get(9)?;
+        let hourly = if rate_type == "hourly" { rate } else { None };
         Ok(TimeEntry {
             id: r.get(0)?,
             date: ls.format("%Y-%m-%d").to_string(),
             start: ls.format("%H:%M").to_string(),
             end: end.map(|e| e.with_timezone(&tz).format("%H:%M").to_string()),
-            hours: hours_between(start, end.unwrap_or(now)),
+            hours,
             timezone: tz_name,
             project: r.get(6)?,
             client: r.get(7)?,
             activity: r.get(4)?,
             message: r.get(5)?,
             running,
+            currency: r.get(10)?,
+            rate: hourly.map(oas_core::format_amount),
+            amount: hourly.map(|rt| oas_core::format_amount((hours * rt as f64).round() as i64)),
         })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
@@ -461,9 +488,34 @@ struct NewProject {
     #[serde(default)]
     aliases: Vec<String>,
     client: Option<String>,
+    rate_type: Option<String>,
+    rate: Option<String>,
+    currency: Option<String>,
 }
 
-async fn add_project(State(st): State<Shared>, Json(b): Json<NewProject>) -> ApiResult {
+/// Validate a rate setting: "none" takes no rate, "hourly" and "fixed" need a positive one.
+fn parse_rate(rate_type: Option<&str>, rate: Option<&str>, currency: Option<&str>) -> Result<(String, Option<i64>, String), ApiError> {
+    let rt = rate_type.map(|t| t.trim().to_lowercase()).filter(|t| !t.is_empty()).unwrap_or_else(|| {
+        if rate.is_some_and(|r| !r.trim().is_empty()) { "hourly".into() } else { "none".into() }
+    });
+    let cur = currency.map(|c| c.trim().to_uppercase()).filter(|c| !c.is_empty()).unwrap_or_else(|| "SEK".into());
+    if cur.len() != 3 || !cur.chars().all(|c| c.is_ascii_alphabetic()) {
+        return Err(ApiError::invalid("currency must be a three-letter code such as SEK"));
+    }
+    match rt.as_str() {
+        "none" => Ok(("none".into(), None, cur)),
+        "hourly" | "fixed" => {
+            let amount = oas_core::parse_amount(rate.unwrap_or("")).map_err(ApiError::invalid)?;
+            if amount == 0 || amount > 10_000_000_000 {
+                return Err(ApiError::invalid("the rate must be above zero"));
+            }
+            Ok((rt, Some(amount), cur))
+        }
+        _ => Err(ApiError::invalid("rate_type must be none, hourly or fixed")),
+    }
+}
+
+async fn add_project(State(st): State<Shared>, Extension(actor): Extension<Actor>, Json(b): Json<NewProject>) -> ApiResult {
     let name = clean(&b.name, "name", 80)?;
     if name.is_empty() {
         return Err(ApiError::invalid("project name is empty"));
@@ -474,18 +526,56 @@ async fn add_project(State(st): State<Shared>, Json(b): Json<NewProject>) -> Api
         .map(|a| clean(a, "alias", 80))
         .collect::<Result<Vec<_>, _>>()?;
     let client = b.client.as_deref().map(|c| clean(c, "client", 80)).transpose()?;
+    let has_rate = b.rate_type.as_deref().is_some_and(|t| t != "none") || b.rate.as_deref().is_some_and(|r| !r.trim().is_empty());
+    if has_rate && actor.role != Role::Admin {
+        return Err(ApiError::new(StatusCode::FORBIDDEN, "forbidden", "only an admin can set a project rate"));
+    }
+    let (rate_type, rate, currency) = parse_rate(b.rate_type.as_deref(), b.rate.as_deref(), b.currency.as_deref())?;
     let conn = st.conn.lock().unwrap();
     let existing = load_projects(&conn)?;
     if matches!(match_project(&existing, &name), Match::Exact(_)) {
         return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "project already exists"));
     }
     conn.execute(
-        "INSERT INTO project(name, aliases, client) VALUES (?1, ?2, ?3)",
-        params![name, serde_json::to_string(&aliases).unwrap(), client],
+        "INSERT INTO project(name, aliases, client, rate_type, rate, currency) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![name, serde_json::to_string(&aliases).unwrap(), client, rate_type, rate, currency],
     )
     .map_err(|_| ApiError::new(StatusCode::CONFLICT, "conflict", "project already exists"))?;
     let id = conn.last_insert_rowid();
-    Ok(Json(json!({"project": Project { id, name, aliases, client, archived: false }})))
+    Ok(Json(json!({"project": Project {
+        id, name, aliases, client, archived: false, rate_type, rate: rate.map(oas_core::format_amount), currency,
+    }})))
+}
+
+#[derive(Deserialize)]
+struct RateBody {
+    rate_type: Option<String>,
+    rate: Option<String>,
+    currency: Option<String>,
+}
+
+/// Set or clear a project's hourly rate or fixed fee. Admin only.
+async fn set_project_rate(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    Json(b): Json<RateBody>,
+) -> ApiResult {
+    if actor.role != Role::Admin {
+        return Err(ApiError::new(StatusCode::FORBIDDEN, "forbidden", "only an admin can set a project rate"));
+    }
+    let (rate_type, rate, currency) = parse_rate(b.rate_type.as_deref(), b.rate.as_deref(), b.currency.as_deref())?;
+    let conn = st.conn.lock().unwrap();
+    let n = conn.execute(
+        "UPDATE project SET rate_type = ?1, rate = ?2, currency = ?3 WHERE id = ?4",
+        params![rate_type, rate, currency, id],
+    )?;
+    if n == 0 {
+        return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such project"));
+    }
+    ledger::audit(&conn, &actor, "project.rate", &id.to_string(), &format!("{rate_type} {}", rate.map(oas_core::format_amount).unwrap_or_default()))?;
+    let project = load_projects(&conn)?.into_iter().find(|p| p.id == id);
+    Ok(Json(json!({"project": project})))
 }
 
 #[derive(Deserialize)]
@@ -602,6 +692,29 @@ async fn report(State(st): State<Shared>, Query(f): Query<Filters>) -> ApiResult
     let mut by_activity: BTreeMap<String, f64> = BTreeMap::new();
     let mut by_day: BTreeMap<String, f64> = BTreeMap::new();
     let mut total = 0.0;
+    // Amounts per project: hourly projects add up hours times rate; a fixed fee counts once.
+    let mut amount_by_project: BTreeMap<String, (i64, String)> = BTreeMap::new();
+    {
+        let projects = load_projects(&conn)?;
+        for e in &entries {
+            let Some(p) = projects.iter().find(|p| p.name == e.project) else { continue };
+            match p.rate_type.as_str() {
+                "hourly" => {
+                    let a = e.amount.as_deref().and_then(|a| oas_core::parse_amount(a).ok()).unwrap_or(0);
+                    amount_by_project.entry(p.name.clone()).or_insert((0, p.currency.clone())).0 += a;
+                }
+                "fixed" => {
+                    let fee = p.rate.as_deref().and_then(|a| oas_core::parse_amount(a).ok()).unwrap_or(0);
+                    amount_by_project.insert(p.name.clone(), (fee, p.currency.clone()));
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut totals_by_currency: BTreeMap<String, i64> = BTreeMap::new();
+    for (amt, cur) in amount_by_project.values() {
+        *totals_by_currency.entry(cur.clone()).or_default() += amt;
+    }
     for e in &entries {
         total += e.hours;
         *by_project.entry(e.project.clone()).or_default() += e.hours;
@@ -618,13 +731,15 @@ async fn report(State(st): State<Shared>, Query(f): Query<Filters>) -> ApiResult
         "by_project": r(by_project),
         "by_activity": r(by_activity),
         "by_day": r(by_day),
+        "amount_by_project": amount_by_project.iter().map(|(k, (a, c))| (k.clone(), json!({"amount": oas_core::format_amount(*a), "currency": c}))).collect::<BTreeMap<_, _>>(),
+        "total_amount": totals_by_currency.iter().map(|(c, a)| (c.clone(), oas_core::format_amount(*a))).collect::<BTreeMap<_, _>>(),
     })))
 }
 
 async fn export_csv(State(st): State<Shared>, Query(f): Query<Filters>) -> Result<Response, ApiError> {
     let conn = st.conn.lock().unwrap();
     let entries = filtered(&conn, &f)?;
-    let mut out = String::from("date,start,end,hours,timezone,project,client,activity,message\n");
+    let mut out = String::from("date,start,end,hours,timezone,project,client,activity,message,rate,amount,currency\n");
     for e in entries {
         out.push_str(&csv_row(&[
             e.date,
@@ -636,6 +751,9 @@ async fn export_csv(State(st): State<Shared>, Query(f): Query<Filters>) -> Resul
             e.client.unwrap_or_default(),
             e.activity,
             e.message,
+            e.rate.unwrap_or_default(),
+            e.amount.unwrap_or_default(),
+            e.currency,
         ]));
         out.push('\n');
     }
@@ -689,6 +807,7 @@ async fn main() {
     let api = Router::new()
         .route("/activities", get(list_activities).post(add_activity))
         .route("/projects", get(list_projects).post(add_project))
+        .route("/projects/{id}/rate", post(set_project_rate))
         .route("/time", get(list_time).post(log_time))
         .route("/time/start", post(start_timer))
         .route("/time/stop", post(stop_timer))

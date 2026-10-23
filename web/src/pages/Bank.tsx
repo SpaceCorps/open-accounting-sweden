@@ -1,5 +1,5 @@
 import {
-  Badge, Button, Checkbox, DataTable, Dialog, DialogContent, DialogDescription, DialogFooter,
+  Badge, Button, Checkbox, DataTable, Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter,
   DialogHeader, DialogTitle, Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
   Tabs, TabsContent, TabsList, TabsTrigger, type DataTableColumn, type DataTableRowAction,
 } from "@spacecorps/components/ui";
@@ -78,6 +78,7 @@ function BookDialog(props: {
             Choose the other accounts; the bank account (1930) line is added for you.
           </DialogDescription>
         </DialogHeader>
+<DialogBody>
         <div className="oas-form">
           <TextField label="Description" value={description} onChange={setDescription} />
           <div className="oas-lines oas-muted"><span>Account</span><span>Debit</span><span>Credit</span><span>VAT code</span><span /></div>
@@ -113,7 +114,8 @@ function BookDialog(props: {
             ))}
           </div>
         </div>
-        <DialogFooter>
+</DialogBody>
+<DialogFooter>
           <Button variant="outline" onClick={props.onClose}>Cancel</Button>
           <Button disabled={!balanced || rows.some((r) => (num(r.debit) > 0 || num(r.credit) > 0) && !r.account) || !rows.some((r) => r.account)} onClick={() => void save()}>Create draft</Button>
         </DialogFooter>

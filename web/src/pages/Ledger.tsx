@@ -1,5 +1,5 @@
 import {
-  Badge, Button, DataTable, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader,
+  Badge, Button, DataTable, Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader,
   DialogTitle, Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Tabs,
   TabsContent, TabsList, TabsTrigger, type DataTableColumn,
 } from "@spacecorps/components/ui";
@@ -56,6 +56,7 @@ function NewDraftDialog({ open, onOpenChange, accounts, onDone }: { open: boolea
           <DialogTitle>New draft voucher</DialogTitle>
           <DialogDescription>Debit and credit must balance. Posting happens only when an admin approves the draft.</DialogDescription>
         </DialogHeader>
+<DialogBody>
         <div className="oas-form">
           <div className="oas-form-row">
             <TextField label="Event date" type="date" value={date} onChange={setDate} />
@@ -86,7 +87,8 @@ function NewDraftDialog({ open, onOpenChange, accounts, onDone }: { open: boolea
             </div>
           </div>
         </div>
-        <DialogFooter>
+</DialogBody>
+<DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button disabled={!balanced || !description.trim() || lines.some((l) => (num(l.debit) > 0 || num(l.credit) > 0) && !l.account)} onClick={() => void save()}>Propose draft</Button>
         </DialogFooter>
@@ -114,6 +116,7 @@ function NewAccountDialog({ open, onOpenChange, onDone }: { open: boolean; onOpe
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader><DialogTitle>Add account</DialogTitle><DialogDescription>Use BAS account numbers (1000-9999).</DialogDescription></DialogHeader>
+<DialogBody>
         <div className="oas-form">
           <TextField label="Number" value={number} onChange={setNumber} placeholder="6540" />
           <TextField label="Name" value={name} onChange={setName} />
@@ -129,7 +132,8 @@ function NewAccountDialog({ open, onOpenChange, onDone }: { open: boolean; onOpe
             </Select>
           </Field>
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button><Button disabled={!number || !name.trim()} onClick={() => void save()}>Add</Button></DialogFooter>
+</DialogBody>
+<DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button><Button disabled={!number || !name.trim()} onClick={() => void save()}>Add</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   );

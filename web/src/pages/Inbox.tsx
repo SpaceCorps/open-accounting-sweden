@@ -1,5 +1,5 @@
 import {
-  Badge, Button, DataTable, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader,
+  Badge, Button, DataTable, Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader,
   DialogTitle, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
   type DataTableColumn, type DataTableRowAction,
 } from "@spacecorps/components/ui";
@@ -41,6 +41,7 @@ function EditDialog({ doc, onClose, onDone }: { doc: Doc | null; onClose: () => 
           <DialogTitle>Receipt details</DialogTitle>
           <DialogDescription>{doc?.filename}. These are used to match the receipt to a bank line. The file itself never changes.</DialogDescription>
         </DialogHeader>
+<DialogBody>
         <div className="oas-form">
           <TextField label="Vendor" value={vendor} onChange={setVendor} />
           <div className="oas-form-row">
@@ -50,7 +51,8 @@ function EditDialog({ doc, onClose, onDone }: { doc: Doc | null; onClose: () => 
           </div>
           <TextField label="Notes" value={notes} onChange={setNotes} />
         </div>
-        <DialogFooter>
+</DialogBody>
+<DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button onClick={() => void save()}>Save</Button>
         </DialogFooter>

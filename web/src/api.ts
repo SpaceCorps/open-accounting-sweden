@@ -65,11 +65,15 @@ export async function download(path: string, filename: string) {
 }
 
 export interface Me { username: string; role: "admin" | "agent"; can_approve: boolean }
-export interface Project { id: number; name: string; aliases: string[]; client: string | null; archived: boolean }
+export interface Project {
+  id: number; name: string; aliases: string[]; client: string | null; archived: boolean;
+  rate_type: "none" | "hourly" | "fixed"; rate: string | null; currency: string;
+}
 export interface Activity { name: string; message: string }
 export interface TimeEntry {
   id: number; date: string; start: string; end: string | null; hours: number; timezone: string;
   project: string; client: string | null; activity: string; message: string; running: boolean;
+  currency: string; rate: string | null; amount: string | null;
 }
 export interface Line { account: number; name: string; debit: string; credit: string }
 export interface Draft {
@@ -85,6 +89,8 @@ export interface Account { number: number; name: string; kind: string }
 export interface Report {
   entries: number; total_hours: number; by_project: Record<string, number>;
   by_activity: Record<string, number>; by_day: Record<string, number>;
+  amount_by_project: Record<string, { amount: string; currency: string }>;
+  total_amount: Record<string, string>;
 }
 
 export interface Doc {

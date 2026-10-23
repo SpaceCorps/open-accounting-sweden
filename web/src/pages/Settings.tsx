@@ -1,5 +1,5 @@
 import {
-  Badge, Button, DataTable, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader,
+  Badge, Button, DataTable, Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader,
   DialogTitle, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, type DataTableColumn,
 } from "@spacecorps/components/ui";
 import { KeyRound, Plus, Trash2 } from "lucide-react";
@@ -127,8 +127,10 @@ function TokensSection() {
             <DialogTitle>{created ? "Copy your token now" : "New access token"}</DialogTitle>
             <DialogDescription>{created ? "It is shown only once and stored only as a hash." : "Name it after where it will be used, for example laptop."}</DialogDescription>
           </DialogHeader>
+<DialogBody>
           {created ? <code className="oas-code">{created}</code> : <TextField label="Name" value={name} onChange={setName} />}
-          <DialogFooter>
+</DialogBody>
+<DialogFooter>
             {created ? <Button onClick={() => { void navigator.clipboard.writeText(created); notifyOk("Copied"); }}><KeyRound /> Copy</Button> : <Button disabled={!name.trim()} onClick={() => void create()}>Create</Button>}
             <Button variant="outline" onClick={() => setOpen(false)}>{created ? "Done" : "Cancel"}</Button>
           </DialogFooter>
@@ -167,6 +169,7 @@ function UsersSection() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Add user</DialogTitle><DialogDescription>Create an agent user for each agent so it can get its own permanent token.</DialogDescription></DialogHeader>
+<DialogBody>
           <div className="oas-form">
             <TextField label="Username" value={username} onChange={setUsername} autoComplete="off" />
             <TextField label="Password" type="password" value={password} onChange={setPassword} autoComplete="new-password" hint="At least 12 characters" />
@@ -177,7 +180,8 @@ function UsersSection() {
               </Select>
             </Field>
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button><Button disabled={username.length < 3 || password.length < 12} onClick={() => void save()}>Add user</Button></DialogFooter>
+</DialogBody>
+<DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button><Button disabled={username.length < 3 || password.length < 12} onClick={() => void save()}>Add user</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </Section>

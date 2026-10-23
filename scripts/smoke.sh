@@ -35,6 +35,15 @@ check "a box marked not used fails the report if an amount lands in it" 'admin v
 check "a voucher can be corrected once" 'admin voucher correct 1 && ! admin voucher correct 1'
 check "VAT report is not ready while boxes are unverified" 'admin --json vat report --quarter 2026-Q3 | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin)[\"ready_to_file\"] is False else 1)"'
 
+admin project add MOHV >/dev/null
+admin time log --activity meeting --project MOHV --date 2026-10-21 --from 11:00 --to 12:00 >/dev/null
+check "an agent cannot set a project rate" '! agent project rate MOHV --hourly 900'
+check "an admin sets an hourly rate" 'admin project rate MOHV --hourly 900'
+check "the report prices tracked hours (1 h at 900 = 900)" 'admin --json time report --from 2026-10-01 --to 2026-10-31 | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d[\"amount_by_project\"][\"MOHV\"][\"amount\"]==\"900.00\" and d[\"total_amount\"][\"SEK\"]==\"900.00\" else 1)"'
+check "the CSV export carries rate and amount" 'admin time export --from 2026-10-01 --to 2026-10-31 | grep -q "MOHV.*,900.00,900.00,SEK"'
+check "a fixed fee counts once, not per hour" 'admin project rate MOHV --fixed 50000 && admin --json time report --from 2026-10-01 --to 2026-10-31 | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d[\"total_amount\"][\"SEK\"]==\"50000.00\" else 1)"'
+check "a rate can be cleared" 'admin project rate MOHV --clear'
+
 printf 'receipt' > $T/r.txt
 printf 'Datum;Text;Belopp\n2026-10-21;GITHUB INC;-40,00\n' > $T/b.csv
 check "bank CSV imports" 'admin bank import $T/b.csv'

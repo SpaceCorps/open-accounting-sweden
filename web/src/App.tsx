@@ -108,7 +108,7 @@ function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
               {me.username} ({me.role})
             </div>
           )}
-          <Button variant="ghost" className="oas-signout" onClick={onSignOut} aria-label="Sign out">
+          <Button variant="ghost" className={collapsed ? "w-full justify-center px-0" : "w-full justify-start"} onClick={onSignOut} aria-label="Sign out">
             <LogOut /> {collapsed ? null : "Sign out"}
           </Button>
         </>
@@ -118,7 +118,7 @@ function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
     >
       <main className="oas-main">
         {current.path === "/" && <Dashboard me={me} />}
-        {current.path === "/time" && <TimePage />}
+        {current.path === "/time" && <TimePage me={me} />}
         {current.path === "/inbox" && <InboxPage />}
         {current.path === "/bank" && <BankPage me={me} />}
         {current.path === "/ledger" && <Ledger me={me} />}

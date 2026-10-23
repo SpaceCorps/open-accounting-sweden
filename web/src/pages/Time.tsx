@@ -1,11 +1,11 @@
 import {
-  Badge, Button, DataTable, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader,
+  Badge, Button, DataTable, Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader,
   DialogTitle, Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Tabs,
   TabsContent, TabsList, TabsTrigger, type DataTableColumn,
 } from "@spacecorps/components/ui";
-import { Download, Play, Plus, Square } from "lucide-react";
+import { Banknote, Download, Play, Plus, Square } from "lucide-react";
 import { useState } from "react";
-import { ApiError, api, download, type Activity, type Project, type Report, type TimeEntry } from "../api";
+import { ApiError, api, download, type Activity, type Me, type Project, type Report, type TimeEntry } from "../api";
 import { monthStart, today, useData } from "../hooks";
 import { EmptyNote, Field, Kpi, PageHeader, Section, TextField, hoursText, notifyError, notifyOk } from "../kit";
 import { entryColumns } from "./shared";
@@ -67,6 +67,7 @@ function LogTimeDialog(props: {
             {props.mode === "log" ? "Add a finished block of work." : "The timer runs until you stop it."} Times are in Europe/Stockholm.
           </DialogDescription>
         </DialogHeader>
+<DialogBody>
         <div className="oas-form">
           <div className="oas-form-row">
             <Field label="Activity">
@@ -105,7 +106,8 @@ function LogTimeDialog(props: {
           ) : null}
           {error ? <p className="oas-error">{error}</p> : null}
         </div>
-        <DialogFooter>
+</DialogBody>
+<DialogFooter>
           <Button variant="outline" onClick={() => props.onOpenChange(false)}>Cancel</Button>
           <Button disabled={busy || !project.trim()} onClick={() => void submit(project, false)}>
             {props.mode === "log" ? "Log time" : "Start"}
@@ -116,18 +118,56 @@ function LogTimeDialog(props: {
   );
 }
 
-function NewProjectDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenChange: (o: boolean) => void; onDone: () => void }) {
+function rateText(p: Project) {
+  if (p.rate_type === "hourly" && p.rate) return `${p.rate} ${p.currency} / hour`;
+  if (p.rate_type === "fixed" && p.rate) return `${p.rate} ${p.currency} fixed`;
+  return "";
+}
+
+function RateFields(props: {
+  type: string; amount: string; currency: string;
+  onType: (v: string) => void; onAmount: (v: string) => void; onCurrency: (v: string) => void;
+}) {
+  return (
+    <>
+      <Field label="Pricing">
+        <Select value={props.type} onValueChange={props.onType}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">No rate</SelectItem>
+            <SelectItem value="hourly">Hourly rate</SelectItem>
+            <SelectItem value="fixed">Fixed fee</SelectItem>
+          </SelectContent>
+        </Select>
+      </Field>
+      {props.type !== "none" ? (
+        <div className="oas-form-row">
+          <TextField label={props.type === "hourly" ? "Rate per hour" : "Fee"} value={props.amount} onChange={props.onAmount} placeholder="900.00" />
+          <TextField label="Currency" value={props.currency} onChange={props.onCurrency} />
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function NewProjectDialog({ open, onOpenChange, onDone, canSetRate }: { open: boolean; onOpenChange: (o: boolean) => void; onDone: () => void; canSetRate: boolean }) {
   const [name, setName] = useState("");
   const [client, setClient] = useState("");
   const [aliases, setAliases] = useState("");
+  const [rateType, setRateType] = useState("none");
+  const [rate, setRate] = useState("");
+  const [currency, setCurrency] = useState("SEK");
   async function save() {
     try {
       await api("/projects", {
         method: "POST",
-        body: { name, client: client || null, aliases: aliases.split(",").map((a) => a.trim()).filter(Boolean) },
+        body: {
+          name, client: client || null, aliases: aliases.split(",").map((a) => a.trim()).filter(Boolean),
+          rate_type: rateType, rate: rateType === "none" ? null : rate, currency,
+        },
       });
       notifyOk("Project created", name);
-      setName(""); setClient(""); setAliases("");
+      setName(""); setClient(""); setAliases(""); setRateType("none"); setRate("");
       onOpenChange(false);
       onDone();
     } catch (e) {
@@ -138,12 +178,52 @@ function NewProjectDialog({ open, onOpenChange, onDone }: { open: boolean; onOpe
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader><DialogTitle>New project</DialogTitle><DialogDescription>Aliases are other names that should match this project when you log time.</DialogDescription></DialogHeader>
-        <div className="oas-form">
-          <TextField label="Name" value={name} onChange={setName} />
-          <TextField label="Client" value={client} onChange={setClient} />
-          <TextField label="Aliases" value={aliases} onChange={setAliases} hint="Comma separated" />
-        </div>
-        <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button><Button disabled={!name.trim()} onClick={() => void save()}>Create</Button></DialogFooter>
+        <DialogBody>
+          <div className="oas-form">
+            <TextField label="Name" value={name} onChange={setName} />
+            <TextField label="Client" value={client} onChange={setClient} />
+            <TextField label="Aliases" value={aliases} onChange={setAliases} hint="Comma separated" />
+            {canSetRate ? <RateFields type={rateType} amount={rate} currency={currency} onType={setRateType} onAmount={setRate} onCurrency={setCurrency} /> : null}
+          </div>
+        </DialogBody>
+        <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button><Button disabled={!name.trim() || (rateType !== "none" && !rate.trim())} onClick={() => void save()}>Create</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function RateDialog({ project, onClose, onDone }: { project: Project | null; onClose: () => void; onDone: () => void }) {
+  const [type, setType] = useState("none");
+  const [amount, setAmount] = useState("");
+  const [currency, setCurrency] = useState("SEK");
+  const [loaded, setLoaded] = useState<number | null>(null);
+  if (project && loaded !== project.id) {
+    setLoaded(project.id);
+    setType(project.rate_type);
+    setAmount(project.rate ?? "");
+    setCurrency(project.currency);
+  }
+  async function save() {
+    if (!project) return;
+    try {
+      await api(`/projects/${project.id}/rate`, { method: "POST", body: { rate_type: type, rate: type === "none" ? null : amount, currency } });
+      notifyOk("Pricing saved", project.name);
+      onClose();
+      onDone();
+    } catch (e) {
+      notifyError(e);
+    }
+  }
+  return (
+    <Dialog open={project !== null} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Pricing for {project?.name}</DialogTitle><DialogDescription>An hourly rate multiplies tracked hours. A fixed fee counts once for the project. Changing it applies to all entries, including past ones.</DialogDescription></DialogHeader>
+        <DialogBody>
+          <div className="oas-form">
+            <RateFields type={type} amount={amount} currency={currency} onType={setType} onAmount={setAmount} onCurrency={setCurrency} />
+          </div>
+        </DialogBody>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button disabled={type !== "none" && !amount.trim()} onClick={() => void save()}>Save</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -167,23 +247,26 @@ function NewActivityDialog({ open, onOpenChange, onDone }: { open: boolean; onOp
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader><DialogTitle>Activity type</DialogTitle><DialogDescription>The message template pre-fills entries of this type. Saving an existing name updates its template.</DialogDescription></DialogHeader>
+<DialogBody>
         <div className="oas-form">
           <TextField label="Name" value={name} onChange={setName} placeholder="meeting, building, strategizing..." />
           <TextField label="Message template" value={message} onChange={setMessage} placeholder="Meeting: {topic}" />
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button><Button disabled={!name.trim()} onClick={() => void save()}>Save</Button></DialogFooter>
+</DialogBody>
+<DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button><Button disabled={!name.trim()} onClick={() => void save()}>Save</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
-export function TimePage() {
+export function TimePage({ me }: { me: Me }) {
   const [from, setFrom] = useState(monthStart());
   const [to, setTo] = useState(today());
   const [project, setProject] = useState("all");
   const [activity, setActivity] = useState("all");
   const [dialog, setDialog] = useState<"log" | "timer" | null>(null);
   const [newProject, setNewProject] = useState(false);
+  const [pricing, setPricing] = useState<Project | null>(null);
   const [newActivity, setNewActivity] = useState(false);
 
   const qs = new URLSearchParams({ from, to });
@@ -221,7 +304,9 @@ export function TimePage() {
     { name: "name", header: "Project" },
     { name: "client", header: "Client", accessor: (p) => p.client ?? "" },
     { name: "aliases", header: "Aliases", accessor: (p) => p.aliases.join(", ") },
+    { name: "rate", header: "Pricing", accessor: (p) => rateText(p), cell: (v) => (v ? String(v) : <span className="oas-muted">none</span>) },
     { name: "hours", header: "Hours (range)", align: "Right", accessor: (p) => report.data?.by_project[p.name] ?? 0, cell: (v) => (v as number).toFixed(2) },
+    { name: "amount", header: "Amount (range)", align: "Right", accessor: (p) => { const a = report.data?.amount_by_project[p.name]; return a ? `${a.amount} ${a.currency}` : ""; } },
     { name: "archived", header: "Status", accessor: (p) => (p.archived ? "archived" : "active"), cell: (v) => <Badge variant={v === "active" ? "success" : "secondary"}>{v as string}</Badge> },
   ];
   const activityColumns: DataTableColumn<Activity>[] = [
@@ -276,6 +361,11 @@ export function TimePage() {
 
       <div className="oas-kpis">
         <Kpi label="Total hours" value={hoursText(report.data?.total_hours ?? 0)} hint={`${report.data?.entries ?? 0} entries`} />
+        <Kpi
+          label="Billable amount"
+          value={Object.entries(report.data?.total_amount ?? {}).map(([c, a]) => `${a} ${c}`).join(" + ") || "0.00"}
+          hint="hourly rates and fixed fees, in range"
+        />
         <Kpi label="Projects" value={Object.keys(report.data?.by_project ?? {}).length} hint="with time in range" />
         <Kpi label="Days worked" value={Object.keys(report.data?.by_day ?? {}).length} hint="with entries in range" />
       </div>
@@ -302,7 +392,14 @@ export function TimePage() {
         <TabsContent value="projects">
           <Section title="Projects" actions={<Button size="sm" onClick={() => setNewProject(true)}><Plus /> New project</Button>}>
             {(projects.data?.projects ?? []).length === 0 ? <EmptyNote>No projects yet. Create one, or type a new name when logging time.</EmptyNote> : (
-              <DataTable columns={projectColumns} rows={projects.data?.projects ?? []} getRowId={(p) => String(p.id)} paginated={false} />
+              <DataTable
+                columns={projectColumns}
+                rows={projects.data?.projects ?? []}
+                getRowId={(p) => String(p.id)}
+                paginated={false}
+                rowActions={me.can_approve ? [{ tag: "pricing", label: "Set pricing", icon: <Banknote aria-hidden="true" />, tooltip: "Hourly rate or fixed fee" }] : []}
+                onRowAction={({ row }) => setPricing(row)}
+              />
             )}
           </Section>
         </TabsContent>
@@ -321,7 +418,8 @@ export function TimePage() {
         projects={projects.data?.projects ?? []}
         onDone={reloadAll}
       />
-      <NewProjectDialog open={newProject} onOpenChange={setNewProject} onDone={reloadAll} />
+      <NewProjectDialog open={newProject} onOpenChange={setNewProject} onDone={reloadAll} canSetRate={me.can_approve} />
+      <RateDialog project={pricing} onClose={() => setPricing(null)} onDone={reloadAll} />
       <NewActivityDialog open={newActivity} onOpenChange={setNewActivity} onDone={reloadAll} />
     </>
   );
