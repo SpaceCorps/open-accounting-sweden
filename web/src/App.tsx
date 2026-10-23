@@ -1,6 +1,6 @@
 import {
   Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Sidebar, SidebarContent,
-  SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInset,
+  SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader,
   SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger, Toaster,
 } from "@spacecorps/components/ui";
 import { ThemeProvider, useTheme } from "@spacecorps/components/theme";
@@ -91,9 +91,12 @@ function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   const current = NAV.find((n) => n.path === path) ?? NAV[0];
   return (
     <SidebarProvider>
-      <Sidebar>
+      <Sidebar variant="inset">
         <SidebarHeader>
-          <div className="oas-topbar-title" style={{ padding: ".5rem" }}>open-accounting-sweden</div>
+          <div className="oas-brand">
+            <span className="oas-brand-mark" aria-hidden="true" />
+            <span className="oas-topbar-title">Accounting</span>
+          </div>
         </SidebarHeader>
         <SidebarContent>
           <SidebarGroup>
@@ -118,18 +121,21 @@ function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
           <div className="oas-muted" style={{ padding: "0 .5rem" }}>
             {me.username} ({me.role})
           </div>
-          <Button variant="ghost" onClick={onSignOut}>
+          <Button variant="ghost" className="oas-signout" onClick={onSignOut}>
             <LogOut /> Sign out
           </Button>
         </SidebarFooter>
       </Sidebar>
-      <SidebarInset>
-        <header className="oas-topbar">
-          <SidebarTrigger />
-          <span className="oas-topbar-title">{current.label}</span>
-          <span style={{ marginLeft: "auto" }}><ThemeToggle /></span>
-        </header>
-        <main className="oas-main">
+      {/* The floating island: the sidebar sits directly on the shell background, and the page lives in
+          a rounded, bordered panel beside it. The header stays put and the page scrolls inside. */}
+      <div className="oas-island-wrap">
+        <div className="oas-island">
+          <header className="oas-topbar">
+            <SidebarTrigger />
+            <span className="oas-topbar-title">{current.label}</span>
+            <span style={{ marginLeft: "auto" }}><ThemeToggle /></span>
+          </header>
+          <main className="oas-scroll"><div className="oas-main">
           {current.path === "/" && <Dashboard me={me} />}
           {current.path === "/time" && <TimePage />}
           {current.path === "/inbox" && <InboxPage />}
@@ -138,8 +144,9 @@ function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
           {current.path === "/vat" && <VatPage me={me} />}
           {current.path === "/payroll" && <PayrollPage me={me} />}
           {current.path === "/settings" && <SettingsPage me={me} />}
-        </main>
-      </SidebarInset>
+          </div></main>
+        </div>
+      </div>
     </SidebarProvider>
   );
 }
