@@ -1,8 +1,4 @@
-import {
-  Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Sidebar, SidebarContent,
-  SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader,
-  SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger, Toaster,
-} from "@spacecorps/components/ui";
+import { AppShell, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Toaster } from "@spacecorps/components/ui";
 import { ThemeProvider, useTheme } from "@spacecorps/components/theme";
 import { BookOpen, Clock, Inbox, Landmark, LayoutDashboard, LogOut, Moon, Percent, Settings, Sun, Users } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
@@ -90,64 +86,47 @@ function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   const path = useHashPath();
   const current = NAV.find((n) => n.path === path) ?? NAV[0];
   return (
-    <SidebarProvider>
-      <Sidebar variant="inset">
-        <SidebarHeader>
-          <div className="oas-brand">
-            <span className="oas-brand-mark" aria-hidden="true" />
-            <span className="oas-topbar-title">Accounting</span>
-          </div>
-        </SidebarHeader>
-        <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupLabel>Workspace</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {NAV.map((item) => (
-                  <SidebarMenuItem key={item.path}>
-                    <SidebarMenuButton asChild isActive={item.path === current.path}>
-                      <a href={`#${item.path}`}>
-                        <item.icon />
-                        <span>{item.label}</span>
-                      </a>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
-        <SidebarFooter>
-          <div className="oas-muted" style={{ padding: "0 .5rem" }}>
-            {me.username} ({me.role})
-          </div>
-          <Button variant="ghost" className="oas-signout" onClick={onSignOut}>
-            <LogOut /> Sign out
+    <AppShell
+      brandIcon={<span className="oas-brand-mark" aria-hidden="true" />}
+      brandName="Accounting"
+      nav={[
+        {
+          label: "Workspace",
+          items: NAV.map((item) => ({
+            id: item.path,
+            label: item.label,
+            icon: <item.icon />,
+            href: `#${item.path}`,
+            active: item.path === current.path,
+          })),
+        },
+      ]}
+      footer={({ collapsed }) => (
+        <>
+          {collapsed ? null : (
+            <div className="oas-muted" style={{ padding: "0 .5rem" }}>
+              {me.username} ({me.role})
+            </div>
+          )}
+          <Button variant="ghost" className="oas-signout" onClick={onSignOut} aria-label="Sign out">
+            <LogOut /> {collapsed ? null : "Sign out"}
           </Button>
-        </SidebarFooter>
-      </Sidebar>
-      {/* The floating island: the sidebar sits directly on the shell background, and the page lives in
-          a rounded, bordered panel beside it. The header stays put and the page scrolls inside. */}
-      <div className="oas-island-wrap">
-        <div className="oas-island">
-          <header className="oas-topbar">
-            <SidebarTrigger />
-            <span className="oas-topbar-title">{current.label}</span>
-            <span style={{ marginLeft: "auto" }}><ThemeToggle /></span>
-          </header>
-          <main className="oas-scroll"><div className="oas-main">
-          {current.path === "/" && <Dashboard me={me} />}
-          {current.path === "/time" && <TimePage />}
-          {current.path === "/inbox" && <InboxPage />}
-          {current.path === "/bank" && <BankPage me={me} />}
-          {current.path === "/ledger" && <Ledger me={me} />}
-          {current.path === "/vat" && <VatPage me={me} />}
-          {current.path === "/payroll" && <PayrollPage me={me} />}
-          {current.path === "/settings" && <SettingsPage me={me} />}
-          </div></main>
-        </div>
-      </div>
-    </SidebarProvider>
+        </>
+      )}
+      title={current.label}
+      headerActions={<ThemeToggle />}
+    >
+      <main className="oas-main">
+        {current.path === "/" && <Dashboard me={me} />}
+        {current.path === "/time" && <TimePage />}
+        {current.path === "/inbox" && <InboxPage />}
+        {current.path === "/bank" && <BankPage me={me} />}
+        {current.path === "/ledger" && <Ledger me={me} />}
+        {current.path === "/vat" && <VatPage me={me} />}
+        {current.path === "/payroll" && <PayrollPage me={me} />}
+        {current.path === "/settings" && <SettingsPage me={me} />}
+      </main>
+    </AppShell>
   );
 }
 
