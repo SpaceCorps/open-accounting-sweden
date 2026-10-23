@@ -1,20 +1,19 @@
-# Web app: built only when a GitHub token with read:packages is passed as a build argument,
-# because @spacecorps/components is published to the private GitHub Packages registry.
-# Without the token the server still builds and serves its small fallback page.
+# Web app. @spacecorps/components is built from the public SpaceCorps/storybook repository at a
+# pinned commit, so no registry token is needed. Bump STORYBOOK_REF to pick up library changes.
 FROM node:24-slim AS web
-ARG GITHUB_TOKEN=""
+ARG STORYBOOK_REF=22c356cb668059433fc5c3c93d8151d4b3a33522
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/* && corepack enable
+RUN git clone https://github.com/SpaceCorps/storybook.git /storybook \
+ && git -C /storybook checkout --quiet "$STORYBOOK_REF"
+WORKDIR /storybook
+RUN pnpm install --frozen-lockfile && pnpm exec vp pack
 WORKDIR /src/web
-COPY web/package.json web/pnpm-workspace.yaml web/.npmrc web/.pnpmfile.cjs ./
+COPY web/package.json web/pnpm-workspace.yaml web/.pnpmfile.cjs ./
+RUN OAS_STORYBOOK_PATH=/storybook pnpm install --no-frozen-lockfile
 COPY web/index.html web/tsconfig.json web/vite.config.ts ./
 COPY web/src ./src
-RUN mkdir -p /out \
- && if [ -n "$GITHUB_TOKEN" ]; then \
-      corepack enable && corepack prepare pnpm@12.6.0 --activate \
-      && GITHUB_TOKEN="$GITHUB_TOKEN" pnpm install --no-frozen-lockfile \
-      && pnpm exec vp build && cp -R dist/. /out/; \
-    else \
-      echo "GITHUB_TOKEN not set: building without the web app"; \
-    fi
+RUN pnpm exec vp build
 
 FROM rust:1-bookworm AS build
 WORKDIR /src
@@ -25,7 +24,7 @@ RUN cargo build --release --locked -p oas-server
 FROM debian:bookworm-slim
 RUN useradd --system --uid 10001 oas && mkdir /data && chown oas /data
 COPY --from=build /src/target/release/oas-server /usr/local/bin/oas-server
-COPY --from=web /out /srv/web
+COPY --from=web /src/web/dist /srv/web
 USER oas
 ENV OAS_DB=/data/oas.db
 ENV OAS_WEB_DIR=/srv/web

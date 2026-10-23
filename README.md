@@ -32,16 +32,17 @@ The web panel signs in with the same username and password. Users with role `age
 
 ## Web app
 
-The web panel (`web/`) is a Vite+ and React app built on the SpaceCorps design system (`@spacecorps/components`): sidebar shell, dashboard, time tracking, ledger with approve and correct actions, settings. It is served by `oas-server` when `OAS_WEB_DIR` points at the build.
+The web panel (`web/`) is a Vite+ and React app built on the SpaceCorps design system, [`@spacecorps/components`](https://github.com/SpaceCorps/storybook) (MIT): sidebar shell, dashboard, time tracking, ledger with approve and correct actions, settings. `oas-server` serves it when `OAS_WEB_DIR` points at the build.
 
 ```bash
+git clone https://github.com/SpaceCorps/storybook ../storybook && (cd ../storybook && pnpm install && vp pack)
 cd web
-OAS_STORYBOOK_PATH=~/git/spacecorps/storybook pnpm install   # or set GITHUB_TOKEN to use GitHub Packages
-vp build                                                      # or `vp dev` with oas-server running on :8080
-OAS_WEB_DIR=$PWD/dist cargo run -p oas-server                 # from the repo root, point at web/dist
+OAS_STORYBOOK_PATH=$PWD/../../storybook pnpm install
+vp build                                                   # or `vp dev` with oas-server running on :8080
+cd .. && OAS_WEB_DIR=$PWD/web/dist cargo run -p oas-server
 ```
 
-`@spacecorps/components` is published to the private GitHub Packages registry, so the Docker image builds the web app only when a `GITHUB_TOKEN` (scope `read:packages`) is passed as a build argument. Without it the image still builds and the server serves a small fallback page.
+The Docker image does the same: it clones the storybook repository at a pinned commit (`STORYBOOK_REF` in the `Dockerfile`), builds it, then builds the web app, so deploying needs no registry token.
 
 ## Planned architecture
 
