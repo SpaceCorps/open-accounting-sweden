@@ -31,4 +31,4 @@ Self-hostable, agentic-first bookkeeping for Swedish small companies (aktiebolag
 
 ## License
 
-TBD.
+MIT, see [LICENSE](LICENSE). Open source and free to self-host.
