@@ -22,10 +22,11 @@
 <body>
 <main>
   <h1>open-accounting-sweden</h1>
-  <div id="login" class="row">
-    <input id="token" type="password" placeholder="Access token" autocomplete="off">
-    <button id="save">Sign in</button>
-  </div>
+  <form id="login" class="row" autocomplete="on">
+    <input id="username" type="text" placeholder="Username" autocomplete="username" required>
+    <input id="password" type="password" placeholder="Password" autocomplete="current-password" required>
+    <button id="save" type="submit">Sign in</button>
+  </form>
   <p id="msg" class="muted"></p>
 
   <div id="app" hidden>
@@ -37,6 +38,7 @@
     <div class="overflow"><table id="vouchers"></table></div>
 
     <h2>Time tracking</h2>
+    <div class="row"><button id="logout" class="secondary">Sign out</button></div>
     <div class="row">
       <label>From <input id="from" type="date"></label>
       <label>To <input id="to" type="date"></label>
@@ -171,12 +173,21 @@ async function post(path, body) {
   if (data.error) { $("msg").textContent = data.error.message; $("msg").className = "err"; return; }
   $("msg").className = "muted"; $("msg").textContent = ""; await load();
 }
-$("save").onclick = async () => {
-  token = $("token").value.trim();
-  const res = await fetch("/api/activities", { headers: { Authorization: "Bearer " + token } });
-  if (!res.ok) { signOut("Invalid token"); return; }
-  sessionStorage.setItem("oas_token", token); $("token").value = "";
-  $("login").hidden = true; $("app").hidden = false; load();
+$("login").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const res = await fetch("/api/login", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: $("username").value, password: $("password").value, ttl_hours: 12 }),
+  });
+  const data = await res.json();
+  $("password").value = "";
+  if (!res.ok) { signOut(data.error ? data.error.message : "Sign in failed"); return; }
+  token = data.token; sessionStorage.setItem("oas_token", token);
+  $("login").hidden = true; $("app").hidden = false; $("msg").textContent = ""; load();
+};
+$("logout").onclick = async () => {
+  try { await api("/logout", { method: "POST" }); } catch (e) {}
+  signOut("Signed out");
 };
 $("refresh").onclick = load;
 $("csv").onclick = async () => {

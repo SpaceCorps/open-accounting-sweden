@@ -16,7 +16,9 @@ oas talks to a self-hosted open-accounting-sweden instance. Output is YAML on st
 or JSON with --json. Errors are a structured envelope on stderr (JSON with --json).
 
 ## Rules
-- Authenticate first: `oas auth login <url>` (token from the OAS_TOKEN of the server).
+- Authenticate first. Humans: `oas auth login <url> --username U`. Agents: a human creates a user
+  with role agent, signs in as it, runs `oas token create <name>`, and gives you the permanent
+  `oas_...` token; then `oas auth login <url> --token oas_...`. Agent users can propose, never approve.
 - Never invent a project. If the project is missing or unknown the command fails with
   `project_required` or `project_not_found` and lists known projects. Ask the human,
   then retry with the confirmed name, or add --create-project once they agree to create it.
@@ -24,7 +26,10 @@ or JSON with --json. Errors are a structured envelope on stderr (JSON with --jso
 - Timed entries use local time in --tz (default Europe/Stockholm).
 
 ## Commands
-oas auth login <url> | status
+oas auth login <url> [--username U]   (prompts for the password; or --token T)
+oas auth status | logout
+oas user add USERNAME --role admin|agent | list | passwd
+oas token create NAME [--save] | list | revoke ID
 oas time log --activity A [--project P] --date YYYY-MM-DD --from HH:MM --to HH:MM [--message M] [--create-project]
 oas time start --activity A [--project P] [--message M] [--create-project]
 oas time stop
@@ -89,6 +94,16 @@ enum Cmd {
     Activity {
         #[command(subcommand)]
         action: ActivityCmd,
+    },
+    /// Users
+    User {
+        #[command(subcommand)]
+        action: UserCmd,
+    },
+    /// Permanent access tokens for the CLI and agents
+    Token {
+        #[command(subcommand)]
+        action: TokenCmd,
     },
     /// Company details used in exports
     Company {
@@ -201,11 +216,40 @@ enum ExportCmd {
 enum AuthCmd {
     Login {
         url: String,
-        /// Token; omit to be prompted (or read from stdin)
+        /// Sign in with this username (the password is prompted or read from stdin)
+        #[arg(long)]
+        username: Option<String>,
+        /// Sign in with an access token instead of a username and password
         #[arg(long)]
         token: Option<String>,
     },
     Status,
+    Logout,
+}
+
+#[derive(Subcommand)]
+enum UserCmd {
+    Add {
+        username: String,
+        #[arg(long)]
+        role: String,
+    },
+    List,
+    /// Change your own password
+    Passwd,
+}
+
+#[derive(Subcommand)]
+enum TokenCmd {
+    /// Create a permanent personal access token (shown once)
+    Create {
+        name: String,
+        /// Store it as this machine's login instead of printing it
+        #[arg(long)]
+        save: bool,
+    },
+    List,
+    Revoke { id: i64 },
 }
 
 #[derive(clap::Args, Clone)]
@@ -528,6 +572,19 @@ fn post_with_project(cfg: &Config, path: &str, mut body: Value) -> Result<Value,
     }
 }
 
+fn read_password(prompt: &str) -> Result<String, Failure> {
+    if std::io::stdin().is_terminal() {
+        rpassword::prompt_password(prompt).map_err(|e| Failure::new("invalid_input", e.to_string()))
+    } else {
+        let mut line = String::new();
+        std::io::stdin()
+            .lock()
+            .read_line(&mut line)
+            .map_err(|e| Failure::new("invalid_input", e.to_string()))?;
+        Ok(line.trim_end_matches(['\n', '\r']).to_string())
+    }
+}
+
 fn print_value(v: &Value, json_out: bool) {
     if json_out {
         println!("{}", serde_json::to_string_pretty(v).unwrap_or_default());
@@ -547,25 +604,87 @@ fn run(cli: Cli) -> Result<(), Failure> {
             }
             Ok(())
         }
-        Cmd::Auth { action: AuthCmd::Login { url, token } } => {
+        Cmd::Auth { action: AuthCmd::Login { url, username, token } } => {
             let url = url.trim_end_matches('/').to_string();
-            let token = match token {
-                Some(t) => t,
-                None if std::io::stdin().is_terminal() => rpassword::prompt_password("Token: ")
-                    .map_err(|e| Failure::new("invalid_input", e.to_string()))?,
-                None => ask(""),
+            let token = match (token, username) {
+                (Some(t), _) => t.trim().to_string(),
+                (None, user) => {
+                    let user = match user {
+                        Some(u) => u,
+                        None if std::io::stdin().is_terminal() => ask("Username: "),
+                        None => return Err(Failure::new("invalid_input", "give --username or --token")),
+                    };
+                    let password = read_password("Password: ")?;
+                    let anon = Config { url: url.clone(), token: String::new() };
+                    let body = json!({"username": user, "password": password, "ttl_hours": 720});
+                    let v = call(&anon, "POST", "/login", Some(&body))?;
+                    v["token"].as_str().unwrap_or_default().to_string()
+                }
             };
-            let cfg = Config { url: url.clone(), token: token.trim().to_string() };
-            call(&cfg, "GET", "/activities", None)?;
+            let cfg = Config { url: url.clone(), token };
+            let me = call(&cfg, "GET", "/me", None)?;
             save_config(&url, &cfg.token)?;
-            print_value(&json!({"status": "ok", "url": url}), json_out);
+            print_value(&json!({"status": "ok", "url": url, "username": me["username"],
+                "role": me["role"]}), json_out);
+            Ok(())
+        }
+        Cmd::Auth { action: AuthCmd::Logout } => {
+            let cfg = load_config()?;
+            let _ = call(&cfg, "POST", "/logout", None);
+            let _ = std::fs::remove_file(config_path());
+            print_value(&json!({"status": "ok"}), json_out);
+            Ok(())
+        }
+        Cmd::User { action } => {
+            let cfg = load_config()?;
+            match action {
+                UserCmd::Add { username, role } => {
+                    let p1 = read_password("New password (12+ characters): ")?;
+                    if std::io::stdin().is_terminal() && read_password("Repeat password: ")? != p1 {
+                        return Err(Failure::new("invalid_input", "passwords do not match"));
+                    }
+                    let body = json!({"username": username, "password": p1, "role": role});
+                    print_value(&call(&cfg, "POST", "/users", Some(&body))?, json_out);
+                }
+                UserCmd::List => print_value(&call(&cfg, "GET", "/users", None)?, json_out),
+                UserCmd::Passwd => {
+                    let current = read_password("Current password: ")?;
+                    let new = read_password("New password (12+ characters): ")?;
+                    if std::io::stdin().is_terminal() && read_password("Repeat new password: ")? != new {
+                        return Err(Failure::new("invalid_input", "passwords do not match"));
+                    }
+                    let body = json!({"current": current, "new": new});
+                    print_value(&call(&cfg, "POST", "/me/password", Some(&body))?, json_out);
+                }
+            }
+            Ok(())
+        }
+        Cmd::Token { action } => {
+            let cfg = load_config()?;
+            match action {
+                TokenCmd::Create { name, save } => {
+                    let v = call(&cfg, "POST", "/tokens", Some(&json!({"name": name})))?;
+                    if save {
+                        let token = v["token"].as_str().unwrap_or_default();
+                        save_config(&cfg.url, token)?;
+                        print_value(&json!({"status": "ok", "id": v["id"], "name": v["name"],
+                            "saved": "this machine now uses the permanent token"}), json_out);
+                    } else {
+                        print_value(&v, json_out);
+                    }
+                }
+                TokenCmd::List => print_value(&call(&cfg, "GET", "/tokens", None)?, json_out),
+                TokenCmd::Revoke { id } => {
+                    print_value(&call(&cfg, "POST", &format!("/tokens/{id}/revoke"), None)?, json_out)
+                }
+            }
             Ok(())
         }
         Cmd::Auth { action: AuthCmd::Status } => {
             let cfg = load_config()?;
             let me = call(&cfg, "GET", "/me", None)?;
-            print_value(&json!({"status": "ok", "url": cfg.url, "role": me["role"],
-                "can_approve": me["can_approve"]}), json_out);
+            print_value(&json!({"status": "ok", "url": cfg.url, "username": me["username"],
+                "role": me["role"], "can_approve": me["can_approve"]}), json_out);
             Ok(())
         }
         Cmd::Time { action } => {

@@ -21,6 +21,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use subtle::ConstantTimeEq;
 
+mod auth;
 mod ledger;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -38,10 +39,20 @@ impl Role {
     }
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct Actor {
+    role: Role,
+    name: String,
+    user_id: Option<i64>,
+    session: Option<String>,
+}
+
 struct AppState {
     conn: Mutex<Connection>,
     token: String,
     agent_token: Option<String>,
+    limiter: auth::Limiter,
+    dummy_hash: String,
 }
 
 type Shared = Arc<AppState>;
@@ -115,6 +126,7 @@ fn open_db(path: &str) -> Result<Connection, rusqlite::Error> {
     conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.execute_batch(SCHEMA)?;
     conn.execute_batch(ledger::SCHEMA)?;
+    conn.execute_batch(auth::SCHEMA)?;
     ledger::seed(&conn)?;
     for (name, message) in [
         ("meeting", "Meeting: {topic}"),
@@ -143,15 +155,21 @@ async fn auth(State(st): State<Shared>, mut req: Request<Body>, next: Next) -> R
         Some(t) => given.as_bytes().ct_eq(t.as_bytes()).into(),
         None => false,
     };
-    let role = if is_admin {
-        Some(Role::Admin)
+    let actor = if is_admin {
+        Some(Actor { role: Role::Admin, name: "admin-token".into(), user_id: None, session: None })
     } else if is_agent {
-        Some(Role::Agent)
+        Some(Actor { role: Role::Agent, name: "agent-token".into(), user_id: None, session: None })
+    } else if given.starts_with("oas_") {
+        let conn = st.conn.lock().unwrap();
+        auth::actor_for_pat(&conn, &given)
+    } else if given.len() == 64 {
+        let conn = st.conn.lock().unwrap();
+        auth::actor_for_session(&conn, &given)
     } else {
         None
     };
-    if let Some(role) = role {
-        req.extensions_mut().insert(role);
+    if let Some(actor) = actor {
+        req.extensions_mut().insert(actor);
         next.run(req).await
     } else {
         ApiError::new(StatusCode::UNAUTHORIZED, "auth_required", "missing or invalid token")
@@ -641,7 +659,14 @@ async fn main() {
             std::process::exit(2);
         }
     }
-    let state: Shared = Arc::new(AppState { conn: Mutex::new(conn), token, agent_token });
+    let dummy_hash = auth::hash_password("dummy password used only for timing").unwrap_or_default();
+    let state: Shared = Arc::new(AppState {
+        conn: Mutex::new(conn),
+        token,
+        agent_token,
+        limiter: auth::Limiter::default(),
+        dummy_hash,
+    });
 
     let api = Router::new()
         .route("/activities", get(list_activities).post(add_activity))
@@ -652,6 +677,11 @@ async fn main() {
         .route("/time/report", get(report))
         .route("/time/export.csv", get(export_csv))
         .route("/me", get(ledger::me))
+        .route("/logout", post(auth::logout))
+        .route("/me/password", post(auth::change_password))
+        .route("/users", get(auth::list_users).post(auth::add_user))
+        .route("/tokens", get(auth::list_tokens).post(auth::create_token))
+        .route("/tokens/{id}/revoke", post(auth::revoke_token))
         .route("/company", get(ledger::get_company).post(ledger::set_company))
         .route("/accounts", get(ledger::list_accounts).post(ledger::add_account))
         .route("/drafts", get(ledger::list_drafts).post(ledger::propose))
@@ -669,6 +699,7 @@ async fn main() {
     let app = Router::new()
         .route("/", get(web))
         .route("/health", get(health))
+        .route("/api/login", post(auth::login))
         .nest("/api", api)
         .layer(middleware::from_fn(security_headers))
         .with_state(state);

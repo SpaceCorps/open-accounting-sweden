@@ -16,7 +16,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::{ApiError, ApiResult, Role, Shared};
+use crate::{Actor, ApiError, ApiResult, Role, Shared};
 
 const SERIES: &str = "A";
 const MAX_ORE: i64 = 10_000_000_000_000;
@@ -139,10 +139,10 @@ fn require_admin(role: Role) -> Result<(), ApiError> {
     }
 }
 
-fn audit(conn: &Connection, role: Role, action: &str, object: &str, detail: &str) -> Result<(), ApiError> {
+pub(crate) fn audit(conn: &Connection, actor: &Actor, action: &str, object: &str, detail: &str) -> Result<(), ApiError> {
     conn.execute(
         "INSERT INTO audit_log(at, actor, action, object, detail) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![oas_core::utc_string(Utc::now()), role.name(), action, object, detail],
+        params![oas_core::utc_string(Utc::now()), actor.name, action, object, detail],
     )?;
     Ok(())
 }
@@ -352,8 +352,8 @@ fn post_voucher(
     Ok(id)
 }
 
-pub async fn me(Extension(role): Extension<Role>) -> Json<Value> {
-    Json(json!({"role": role.name(), "can_approve": role == Role::Admin}))
+pub async fn me(Extension(actor): Extension<Actor>) -> Json<Value> {
+    Json(json!({"username": actor.name, "role": actor.role.name(), "can_approve": actor.role == Role::Admin}))
 }
 
 pub async fn list_accounts(State(st): State<Shared>) -> ApiResult {
@@ -378,10 +378,10 @@ pub struct NewAccount {
 
 pub async fn add_account(
     State(st): State<Shared>,
-    Extension(role): Extension<Role>,
+    Extension(actor): Extension<Actor>,
     Json(b): Json<NewAccount>,
 ) -> ApiResult {
-    require_admin(role)?;
+    require_admin(actor.role)?;
     if !(1000..=9999).contains(&b.number) {
         return Err(ApiError::invalid("account number must be 1000-9999"));
     }
@@ -393,7 +393,7 @@ pub async fn add_account(
     let conn = st.conn.lock().unwrap();
     conn.execute("INSERT INTO account(number, name, kind) VALUES (?1, ?2, ?3)", params![b.number, name, kind])
         .map_err(|_| ApiError::new(StatusCode::CONFLICT, "conflict", "account already exists"))?;
-    audit(&conn, role, "account.add", &b.number.to_string(), &name)?;
+    audit(&conn, &actor, "account.add", &b.number.to_string(), &name)?;
     Ok(Json(json!({"account": {"number": b.number, "name": name, "kind": kind}})))
 }
 
@@ -413,10 +413,10 @@ pub async fn get_company(State(st): State<Shared>) -> ApiResult {
 
 pub async fn set_company(
     State(st): State<Shared>,
-    Extension(role): Extension<Role>,
+    Extension(actor): Extension<Actor>,
     Json(b): Json<CompanyIn>,
 ) -> ApiResult {
-    require_admin(role)?;
+    require_admin(actor.role)?;
     let name = clean_text(&b.name, "name", 100)?;
     let org = clean_text(b.org_number.as_deref().unwrap_or(""), "org_number", 20)?;
     if name.is_empty() {
@@ -428,7 +428,7 @@ pub async fn set_company(
          ON CONFLICT(id) DO UPDATE SET name = excluded.name, org_number = excluded.org_number",
         params![name, org],
     )?;
-    audit(&conn, role, "company.set", "1", &name)?;
+    audit(&conn, &actor, "company.set", "1", &name)?;
     Ok(Json(json!({"company": {"name": name, "org_number": org}})))
 }
 
@@ -442,7 +442,7 @@ pub struct NewDraft {
 
 pub async fn propose(
     State(st): State<Shared>,
-    Extension(role): Extension<Role>,
+    Extension(actor): Extension<Actor>,
     Json(b): Json<NewDraft>,
 ) -> ApiResult {
     check_date(&b.event_date)?;
@@ -457,7 +457,7 @@ pub async fn propose(
     tx.execute(
         "INSERT INTO draft(event_date, description, counterparty, created_by, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![b.event_date, description, counterparty, role.name(), oas_core::utc_string(Utc::now())],
+        params![b.event_date, description, counterparty, actor.name.as_str(), oas_core::utc_string(Utc::now())],
     )?;
     let id = tx.last_insert_rowid();
     for (a, d, c) in &lines {
@@ -466,7 +466,7 @@ pub async fn propose(
             params![id, a, d, c],
         )?;
     }
-    audit(&tx, role, "draft.propose", &id.to_string(), &description)?;
+    audit(&tx, &actor, "draft.propose", &id.to_string(), &description)?;
     tx.commit()?;
     Ok(Json(json!({"draft": draft_view(&conn, id)?})))
 }
@@ -484,10 +484,10 @@ pub async fn list_drafts(State(st): State<Shared>) -> ApiResult {
 
 pub async fn approve(
     State(st): State<Shared>,
-    Extension(role): Extension<Role>,
+    Extension(actor): Extension<Actor>,
     Path(id): Path<i64>,
 ) -> ApiResult {
-    require_admin(role)?;
+    require_admin(actor.role)?;
     let mut conn = st.conn.lock().unwrap();
     let tx = conn.transaction()?;
     let (event_date, description, counterparty, created_by, created_at): (String, String, String, String, String) =
@@ -507,25 +507,25 @@ pub async fn approve(
     if dsum != csum || lines.len() < 2 {
         return Err(ApiError::invalid("draft does not balance"));
     }
-    let vid = post_voucher(&tx, &event_date, &description, &counterparty, &created_by, role.name(), &created_at, None, &lines)?;
+    let vid = post_voucher(&tx, &event_date, &description, &counterparty, &created_by, actor.name.as_str(), &created_at, None, &lines)?;
     tx.execute("DELETE FROM draft WHERE id = ?1", params![id])?;
-    audit(&tx, role, "voucher.approve", &vid.to_string(), &format!("draft {id}"))?;
+    audit(&tx, &actor, "voucher.approve", &vid.to_string(), &format!("draft {id}"))?;
     tx.commit()?;
     Ok(Json(json!({"voucher": voucher_view(&conn, vid)?})))
 }
 
 pub async fn reject(
     State(st): State<Shared>,
-    Extension(role): Extension<Role>,
+    Extension(actor): Extension<Actor>,
     Path(id): Path<i64>,
 ) -> ApiResult {
-    require_admin(role)?;
+    require_admin(actor.role)?;
     let conn = st.conn.lock().unwrap();
     let n = conn.execute("DELETE FROM draft WHERE id = ?1", params![id])?;
     if n == 0 {
         return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such draft"));
     }
-    audit(&conn, role, "draft.reject", &id.to_string(), "")?;
+    audit(&conn, &actor, "draft.reject", &id.to_string(), "")?;
     Ok(Json(json!({"status": "ok"})))
 }
 
@@ -558,10 +558,10 @@ pub async fn get_voucher(State(st): State<Shared>, Path(id): Path<i64>) -> ApiRe
 
 pub async fn correct(
     State(st): State<Shared>,
-    Extension(role): Extension<Role>,
+    Extension(actor): Extension<Actor>,
     Path(id): Path<i64>,
 ) -> ApiResult {
-    require_admin(role)?;
+    require_admin(actor.role)?;
     let mut conn = st.conn.lock().unwrap();
     let tx = conn.transaction()?;
     let (series, number, event_date, description, counterparty): (String, i64, String, String, String) = tx
@@ -583,10 +583,10 @@ pub async fn correct(
         voucher_lines(&tx, id)?.into_iter().map(|(a, d, c)| (a, c, d)).collect();
     let text = format!("Rattelse av {series}{number}: {description}");
     let vid = post_voucher(
-        &tx, &event_date, &text, &counterparty, role.name(), role.name(),
+        &tx, &event_date, &text, &counterparty, actor.name.as_str(), actor.name.as_str(),
         &oas_core::utc_string(Utc::now()), Some(id), &reversed,
     )?;
-    audit(&tx, role, "voucher.correct", &vid.to_string(), &format!("reverses {series}{number}"))?;
+    audit(&tx, &actor, "voucher.correct", &vid.to_string(), &format!("reverses {series}{number}"))?;
     tx.commit()?;
     Ok(Json(json!({"voucher": voucher_view(&conn, vid)?})))
 }

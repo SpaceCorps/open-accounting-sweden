@@ -11,7 +11,16 @@ OAS_TOKEN=$(openssl rand -hex 32) OAS_AGENT_TOKEN=$(openssl rand -hex 32) cargo 
 cargo run -p oas-cli -- auth login http://127.0.0.1:8080
 ```
 
-`OAS_TOKEN` is the admin token (can approve postings). `OAS_AGENT_TOKEN` is optional and can only propose and read, which is the token to give an agent. Run `oas agent-readme` for the full command list.
+`OAS_TOKEN` is a bootstrap admin token (can approve postings). Use it once to create your own account, then sign in with a username and password:
+
+```bash
+oas auth login http://127.0.0.1:8080 --token <OAS_TOKEN>
+oas user add yourname --role admin        # prompts for a password (12+ characters)
+oas auth login http://127.0.0.1:8080 --username yourname
+oas token create laptop --save            # optional permanent access token for this machine
+```
+
+The web panel signs in with the same username and password. Users with role `agent` can propose and read but never approve, so create one for each agent, sign in as it and run `oas token create` to get a permanent `oas_...` token. Passwords are hashed with Argon2id, sessions expire, failed logins are rate limited, and tokens are stored only as hashes. Run `oas agent-readme` for the full command list.
 
 ## Goals
 
