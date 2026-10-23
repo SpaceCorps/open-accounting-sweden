@@ -701,6 +701,115 @@ async fn edit_entry(
     Ok(Json(json!({"entry": entry})))
 }
 
+#[derive(Deserialize, Default)]
+struct IncomeQuery {
+    /// Month as YYYY-MM; defaults to the current month in Stockholm.
+    month: Option<String>,
+}
+
+fn weekdays(from: chrono::NaiveDate, to: chrono::NaiveDate) -> i64 {
+    use chrono::Datelike;
+    let mut d = from;
+    let mut n = 0;
+    while d <= to {
+        if d.weekday().number_from_monday() <= 5 {
+            n += 1;
+        }
+        d += chrono::Duration::days(1);
+    }
+    n
+}
+
+/// Income for a month, excluding VAT, in SEK: tracked hours at hourly rates, fixed fees (counted in the
+/// month of the project's first tracked entry) and invoices not built from tracked time. The projection
+/// scales only the hourly part by the share of workdays (Monday to Friday) that have passed.
+async fn income(State(st): State<Shared>, Query(q): Query<IncomeQuery>) -> ApiResult {
+    use chrono::Datelike;
+    let conn = st.conn.lock().unwrap();
+    let today = Utc::now().with_timezone(&chrono_tz::Europe::Stockholm).date_naive();
+    let first = match q.month.as_deref().filter(|m| !m.trim().is_empty()) {
+        Some(m) => chrono::NaiveDate::parse_from_str(&format!("{}-01", m.trim()), "%Y-%m-%d")
+            .map_err(|_| ApiError::invalid("month must look like 2026-10"))?,
+        None => today.with_day(1).unwrap_or(today),
+    };
+    let next = if first.month() == 12 {
+        chrono::NaiveDate::from_ymd_opt(first.year() + 1, 1, 1)
+    } else {
+        chrono::NaiveDate::from_ymd_opt(first.year(), first.month() + 1, 1)
+    }
+    .unwrap_or(first);
+    let last = next - chrono::Duration::days(1);
+    let (from_s, to_s) = (first.to_string(), last.to_string());
+
+    let all = load_entries(&conn)?;
+    let projects = load_projects(&conn)?;
+    let mut hourly: i64 = 0;
+    let mut hours = 0.0;
+    let mut fixed: i64 = 0;
+    for e in all.iter().filter(|e| e.date >= from_s && e.date <= to_s) {
+        let Some(p) = projects.iter().find(|p| p.name == e.project) else { continue };
+        if p.currency != "SEK" {
+            continue;
+        }
+        hours += e.hours;
+        if p.rate_type == "hourly" {
+            hourly += e.amount.as_deref().and_then(|a| oas_core::parse_amount(a).ok()).unwrap_or(0);
+        }
+    }
+    for p in projects.iter().filter(|p| p.rate_type == "fixed" && p.currency == "SEK") {
+        let earliest = all.iter().filter(|e| e.project == p.name).map(|e| e.date.as_str()).min();
+        if earliest.is_some_and(|d| d >= from_s.as_str() && d <= to_s.as_str()) {
+            fixed += p.rate.as_deref().and_then(|a| oas_core::parse_amount(a).ok()).unwrap_or(0);
+        }
+    }
+    // Invoices that are not built from tracked time, by invoice date, excluding VAT.
+    let other: i64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM((l.quantity * l.unit_price + 50) / 100), 0)
+             FROM invoice_line l JOIN invoice i ON i.id = l.invoice_id
+             WHERE i.issue_date >= ?1 AND i.issue_date <= ?2 AND i.currency = 'SEK'
+               AND NOT EXISTS (SELECT 1 FROM invoiced_entry x WHERE x.invoice_id = i.id)",
+            params![from_s, to_s],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let issued_net: i64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM((l.quantity * l.unit_price + 50) / 100), 0)
+             FROM invoice_line l JOIN invoice i ON i.id = l.invoice_id
+             WHERE i.status = 'issued' AND i.issue_date >= ?1 AND i.issue_date <= ?2 AND i.currency = 'SEK'",
+            params![from_s, to_s],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    let elapsed_end = if today < first { first - chrono::Duration::days(1) } else { today.min(last) };
+    let elapsed = if elapsed_end < first { 0 } else { weekdays(first, elapsed_end) };
+    let total_days = weekdays(first, last);
+    let projected_hourly = if elapsed > 0 && elapsed < total_days {
+        ((hourly as f64) / elapsed as f64 * total_days as f64).round() as i64
+    } else {
+        hourly
+    };
+    let earned = hourly + fixed + other;
+    let projected = projected_hourly + fixed + other;
+    Ok(Json(json!({
+        "month": first.format("%Y-%m").to_string(), "currency": "SEK",
+        "excl_vat": true,
+        "earned_so_far": oas_core::format_amount(earned),
+        "projected": oas_core::format_amount(projected),
+        "tracked_hours": (hours * 100.0_f64).round() / 100.0,
+        "parts": {
+            "hourly": oas_core::format_amount(hourly),
+            "fixed_fees": oas_core::format_amount(fixed),
+            "other_invoices": oas_core::format_amount(other),
+        },
+        "invoiced_issued_net": oas_core::format_amount(issued_net),
+        "workdays_elapsed": elapsed, "workdays_total": total_days,
+        "note": "Excludes VAT. The projection scales only the hourly part by workdays (Monday to Friday) passed; fixed fees and other invoices are counted as they are. It is a rough estimate, not a forecast of what will be paid.",
+    })))
+}
+
 async fn list_time(State(st): State<Shared>, Query(f): Query<Filters>) -> ApiResult {
     let conn = st.conn.lock().unwrap();
     Ok(Json(json!({"entries": filtered(&conn, &f)?})))
@@ -834,6 +943,7 @@ async fn main() {
         .route("/projects", get(list_projects).post(add_project))
         .route("/projects/{id}/rate", post(set_project_rate))
         .route("/time", get(list_time).post(log_time))
+        .route("/income", get(income))
         .route("/time/start", post(start_timer))
         .route("/time/{id}/message", post(edit_entry))
         .route("/time/stop", post(stop_timer))

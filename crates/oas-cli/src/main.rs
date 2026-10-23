@@ -33,6 +33,7 @@ oas token create NAME [--save] | list | revoke ID
 oas time log --activity A [--project P] --date YYYY-MM-DD --from HH:MM --to HH:MM [--message M] [--create-project]
 oas time start --activity A [--project P] [--message M] [--create-project]
 oas time stop
+oas income [--month YYYY-MM]   (earned so far and a rough month-end projection, excl. VAT, from tracked time, fixed fees and non-time invoices)
 oas time edit ID --message TEXT   (changes only the message of a logged entry)
 oas time list [--from D] [--to D] [--project P] [--activity A]
 oas time report [--week | --month | --from D --to D] [--project P] [--activity A]
@@ -226,6 +227,12 @@ enum Cmd {
     Match {
         #[command(subcommand)]
         action: MatchCmd,
+    },
+    /// Income this month: earned so far and a month-end projection (excl. VAT)
+    Income {
+        /// Month as YYYY-MM, default the current month
+        #[arg(long)]
+        month: Option<String>,
     },
     /// Operating manual for agents
     AgentReadme,
@@ -1360,6 +1367,12 @@ fn run(cli: Cli) -> Result<(), Failure> {
                     print_value(&call(&cfg, "POST", &format!("/payroll/rates/{}/verify", encode(&key)), Some(&body))?, json_out);
                 }
             }
+            Ok(())
+        }
+        Cmd::Income { month } => {
+            let cfg = load_config()?;
+            let q = month.map(|m| format!("?month={}", encode(&m))).unwrap_or_default();
+            print_value(&call(&cfg, "GET", &format!("/income{q}"), None)?, json_out);
             Ok(())
         }
         Cmd::Customer { action } => {

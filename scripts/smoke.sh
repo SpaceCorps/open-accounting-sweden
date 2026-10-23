@@ -42,6 +42,7 @@ check "an admin sets an hourly rate" 'admin project rate MOHV --hourly 900'
 check "the report prices tracked hours (1 h at 900 = 900)" 'admin --json time report --from 2026-10-01 --to 2026-10-31 | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d[\"amount_by_project\"][\"MOHV\"][\"amount\"]==\"900.00\" and d[\"total_amount\"][\"SEK\"]==\"900.00\" else 1)"'
 check "the CSV export carries rate and amount" 'admin time export --from 2026-10-01 --to 2026-10-31 | grep -q "MOHV.*,900.00,900.00,SEK"'
 check "a fixed fee counts once, not per hour" 'admin project rate MOHV --fixed 50000 && admin --json time report --from 2026-10-01 --to 2026-10-31 | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d[\"total_amount\"][\"SEK\"]==\"50000.00\" else 1)"'
+check "income counts tracked hours at the hourly rate" 'admin project rate MOHV --hourly 900 >/dev/null && admin --json income --month 2026-10 | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d[\"parts\"][\"hourly\"]==\"900.00\" and d[\"earned_so_far\"]==\"900.00\" and d[\"excl_vat\"] else 1)"'
 check "a rate can be cleared" 'admin project rate MOHV --clear'
 
 admin company set "Testbolaget AB" --org-number 556026-9986 --address "Testgatan 1, 111 22 Stockholm" --f-skatt >/dev/null

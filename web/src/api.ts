@@ -156,3 +156,9 @@ export async function openInvoicePage(id: number) {
   window.open(url, "_blank", "noopener");
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
+
+export interface Income {
+  month: string; currency: string; earned_so_far: string; projected: string; tracked_hours: number;
+  parts: { hourly: string; fixed_fees: string; other_invoices: string };
+  invoiced_issued_net: string; workdays_elapsed: number; workdays_total: number; note: string;
+}

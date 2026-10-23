@@ -1,7 +1,7 @@
 import { Badge, Button, Progress } from "@spacecorps/components/ui";
 import { DataTable } from "@spacecorps/components/ui";
 import { useData, monthStart, today, weekStart } from "../hooks";
-import type { Draft, Me, Report, TimeEntry, Voucher } from "../api";
+import type { Draft, Income, Me, Report, TimeEntry, Voucher } from "../api";
 import { Kpi, PageHeader, Section, hoursText } from "../kit";
 import { DraftsTable, VouchersTable, entryColumns } from "./shared";
 
@@ -12,6 +12,7 @@ export function Dashboard({ me }: { me: Me }) {
   const entries = useData<{ entries: TimeEntry[] }>(`/time?from=${monthStart()}&to=${t}`);
   const drafts = useData<{ drafts: Draft[] }>("/drafts");
   const vouchers = useData<{ vouchers: Voucher[] }>("/vouchers");
+  const income = useData<Income>("/income");
   const verify = useData<{ ok: boolean; vouchers: number; issues: string[] }>("/ledger/verify");
 
   const refreshLedger = () => {
@@ -40,6 +41,11 @@ export function Dashboard({ me }: { me: Me }) {
       />
 
       <div className="oas-kpis">
+        <Kpi
+          label={`Projected income, ${income.data?.month ?? "this month"}`}
+          value={`${income.data?.projected ?? "0.00"} kr`}
+          hint={income.data ? `${income.data.earned_so_far} kr earned so far, excl. VAT. Estimate from ${income.data.workdays_elapsed} of ${income.data.workdays_total} workdays.` : ""}
+        />
         <Kpi label="Hours this week" value={hoursText(week.data?.total_hours ?? 0)} hint={`${week.data?.entries ?? 0} entries`} />
         <Kpi label="Hours this month" value={hoursText(month.data?.total_hours ?? 0)} hint={`${projects.length} projects`} />
         <Kpi label="Drafts to approve" value={pending.length} badge={pending.length ? <Badge variant="warning">needs review</Badge> : <Badge variant="success">all clear</Badge>} />
