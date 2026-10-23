@@ -5,3 +5,6 @@
 /reports/
 /research_notes/
 .env
+web/node_modules
+web/dist
+web/pnpm-lock.yaml

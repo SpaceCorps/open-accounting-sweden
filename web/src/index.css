@@ -1,0 +1,8 @@
+/* Design system tokens and Tailwind, as the SpaceCorps component library expects. */
+@import "@spacecorps/components/styles/index.css";
+
+/* Tailwind must scan the library's compiled components for the utility classes they use. */
+@source "../node_modules/@spacecorps/components/dist";
+@source ".";
+
+@import "./app.css";

@@ -177,18 +177,20 @@ async fn auth(State(st): State<Shared>, mut req: Request<Body>, next: Next) -> R
     }
 }
 
-async fn security_headers(req: Request<Body>, next: Next) -> Response {
+async fn security_headers(State(has_ui): State<bool>, req: Request<Body>, next: Next) -> Response {
     let mut res = next.run(req).await;
     let h = res.headers_mut();
     h.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
     h.insert("x-frame-options", HeaderValue::from_static("DENY"));
     h.insert("referrer-policy", HeaderValue::from_static("no-referrer"));
-    h.insert(
-        "content-security-policy",
-        HeaderValue::from_static(
-            "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'",
-        ),
-    );
+    // The built web app needs no inline scripts. The small fallback page does.
+    let csp = if has_ui {
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; \
+         script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'"
+    } else {
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'"
+    };
+    h.insert("content-security-policy", HeaderValue::from_static(csp));
     res
 }
 
@@ -696,19 +698,36 @@ async fn main() {
         .route("/export/sie", get(ledger::export_sie))
         .layer(middleware::from_fn_with_state(state.clone(), auth));
 
-    let app = Router::new()
-        .route("/", get(web))
+    // OAS_WEB_DIR points at the built web app (web/dist). Without it a small fallback page is served.
+    let web_dir = std::env::var("OAS_WEB_DIR")
+        .ok()
+        .filter(|d| std::path::Path::new(d).join("index.html").is_file());
+    let has_ui = web_dir.is_some();
+    let mut app = Router::new()
         .route("/health", get(health))
         .route("/api/login", post(auth::login))
-        .nest("/api", api)
-        .layer(middleware::from_fn(security_headers))
+        .nest("/api", api);
+    app = match &web_dir {
+        Some(dir) => {
+            let index = std::path::Path::new(dir).join("index.html");
+            app.fallback_service(
+                tower_http::services::ServeDir::new(dir).fallback(tower_http::services::ServeFile::new(index)),
+            )
+        }
+        None => app.route("/", get(web)),
+    };
+    let app = app
+        .layer(middleware::from_fn_with_state(has_ui, security_headers))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&bind).await.unwrap_or_else(|e| {
         eprintln!("cannot bind {bind}: {e}");
         std::process::exit(1);
     });
-    eprintln!("oas-server listening on {bind}, database {db_path}");
+    eprintln!(
+        "oas-server listening on {bind}, database {db_path}, web app {}",
+        web_dir.as_deref().unwrap_or("fallback page")
+    );
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;

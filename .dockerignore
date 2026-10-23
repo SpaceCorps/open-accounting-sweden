@@ -3,3 +3,5 @@ target
 reports
 research_notes
 *.db
+web/node_modules
+web/dist
