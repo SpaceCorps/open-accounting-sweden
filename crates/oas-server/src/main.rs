@@ -723,6 +723,7 @@ async fn main() {
         .route("/vat/config", get(vat::config))
         .route("/vat/report", get(vat::report))
         .route("/vat/boxes/{box}/verify", post(vat::verify_box))
+        .route("/vat/boxes/{box}/unused", post(vat::set_not_used))
         .route("/vat/accounts", post(vat::map_account))
         .route("/employees", get(payroll::list_employees).post(payroll::add_employee))
         .route("/employees/{id}/deactivate", post(payroll::deactivate_employee))

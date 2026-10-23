@@ -2,13 +2,13 @@ import {
   Badge, DataTable, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Tabs, TabsContent,
   TabsList, TabsTrigger, type DataTableColumn, type DataTableRowAction,
 } from "@spacecorps/components/ui";
-import { ShieldAlert, ShieldCheck } from "lucide-react";
+import { EyeOff, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { api, type Me } from "../api";
 import { useData } from "../hooks";
 import { Field, Kpi, PageHeader, Section, notifyError, notifyOk } from "../kit";
 
-interface Box { box: string; label: string; kind: string; amount: string; vouchers: string[]; verified: boolean; verified_by: string | null; mapping_source: string }
+interface Box { box: string; label: string; kind: string; amount: string; vouchers: string[]; verified: boolean; verified_by: string | null; mapping_source: string; not_used: boolean }
 interface Check { check: string; ok: boolean; detail: string }
 interface Report {
   quarter: string; from: string; to: string; due_date: string; due_date_note: string; vouchers_in_period: number;
@@ -56,13 +56,18 @@ export function VatPage({ me }: { me: Me }) {
     { name: "label", header: "Meaning" },
     { name: "amount", header: "Amount (SEK)", align: "Right", accessor: (b) => parseFloat(b.amount), cell: (_, b) => b.amount },
     { name: "vouchers", header: "Vouchers", accessor: (b) => b.vouchers.join(", ") },
-    { name: "verified", header: "Mapping", accessor: (b) => (b.verified ? "verified" : "UNVERIFIED"), cell: (v) => <Badge variant={v === "verified" ? "success" : "warning"}>{v as string}</Badge> },
+    { name: "verified", header: "Mapping", accessor: (b) => (b.not_used ? "not used" : b.verified ? "verified" : "UNVERIFIED"), cell: (v) => <Badge variant={v === "verified" ? "success" : v === "not used" ? "secondary" : "warning"}>{v as string}</Badge> },
   ];
   const boxActions = (b: Box): DataTableRowAction<Box>[] =>
     me.can_approve
-      ? [b.verified
-          ? { tag: "unverify", label: "Mark unverified", icon: <ShieldAlert aria-hidden="true" />, tooltip: "Mark unverified" }
-          : { tag: "verify", label: "I checked this box", icon: <ShieldCheck aria-hidden="true" />, tooltip: "I checked this box against SKV 4700" }]
+      ? [
+          b.verified
+            ? { tag: "unverify", label: "Mark unverified", icon: <ShieldAlert aria-hidden="true" />, tooltip: "Mark unverified" }
+            : { tag: "verify", label: "I checked this box", icon: <ShieldCheck aria-hidden="true" />, tooltip: "I checked this box against SKV 4700" },
+          ...(b.box === "49" ? [] : [b.not_used
+            ? { tag: "used", label: "Counts again", icon: <ShieldCheck aria-hidden="true" />, tooltip: "We use this box after all" }
+            : { tag: "unused", label: "Not used by us", icon: <EyeOff aria-hidden="true" />, tooltip: "We never use this box" }]),
+        ]
       : [];
 
   const checkColumns: DataTableColumn<Check>[] = [
@@ -112,7 +117,10 @@ export function VatPage({ me }: { me: Me }) {
               rows={r?.boxes ?? []}
               getRowId={(b) => b.box}
               rowActions={boxActions}
-              onRowAction={({ tag, row }) => void setVerified(row.box, tag === "verify")}
+              onRowAction={({ tag, row }) => {
+                if (tag === "unused" || tag === "used") void api(`/vat/boxes/${row.box}/unused`, { method: "POST", body: { not_used: tag === "unused" } }).then(() => { notifyOk(tag === "unused" ? "Box marked not used" : "Box counts again"); reload(); }).catch(notifyError);
+                else void setVerified(row.box, tag === "verify");
+              }}
               paginated={false}
               caption="VAT boxes"
             />

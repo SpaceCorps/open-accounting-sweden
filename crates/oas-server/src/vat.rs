@@ -84,6 +84,14 @@ const ACCOUNTS: &[(i64, &str, &str)] = &[
 ];
 
 pub fn seed(conn: &Connection) -> rusqlite::Result<()> {
+    let has: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('vat_box') WHERE name = 'not_used'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has == 0 {
+        conn.execute_batch("ALTER TABLE vat_box ADD COLUMN not_used INTEGER NOT NULL DEFAULT 0")?;
+    }
     for (b, label, kind, source) in BOXES {
         conn.execute(
             "INSERT OR IGNORE INTO vat_box(box, label, kind, source) VALUES (?1, ?2, ?3, ?4)",
@@ -117,11 +125,12 @@ fn require_admin(actor: &Actor) -> Result<(), ApiError> {
 pub async fn config(State(st): State<Shared>) -> ApiResult {
     let conn = st.conn.lock().unwrap();
     let boxes: Vec<Value> = conn
-        .prepare("SELECT box, label, kind, source, verified, verified_by, verified_at FROM vat_box ORDER BY box")?
+        .prepare("SELECT box, label, kind, source, verified, verified_by, verified_at, not_used FROM vat_box ORDER BY box")?
         .query_map([], |r| {
             Ok(json!({"box": r.get::<_, String>(0)?, "label": r.get::<_, String>(1)?, "kind": r.get::<_, String>(2)?,
                       "source": r.get::<_, String>(3)?, "verified": r.get::<_, i64>(4)? != 0,
-                      "verified_by": r.get::<_, Option<String>>(5)?, "verified_at": r.get::<_, Option<String>>(6)?}))
+                      "verified_by": r.get::<_, Option<String>>(5)?, "verified_at": r.get::<_, Option<String>>(6)?,
+                      "not_used": r.get::<_, i64>(7)? != 0}))
         })?
         .filter_map(Result::ok)
         .collect();
@@ -159,7 +168,7 @@ pub async fn verify_box(
     let conn = st.conn.lock().unwrap();
     let n = if body.verified {
         conn.execute(
-            "UPDATE vat_box SET verified = 1, verified_by = ?1, verified_at = ?2 WHERE box = ?3",
+            "UPDATE vat_box SET verified = 1, verified_by = ?1, verified_at = ?2, not_used = 0 WHERE box = ?3",
             params![actor.name, utc_string(Utc::now()), b],
         )?
     } else {
@@ -170,6 +179,33 @@ pub async fn verify_box(
     }
     crate::ledger::audit(&conn, &actor, if body.verified { "vat.verify" } else { "vat.unverify" }, &b, "")?;
     Ok(Json(json!({"box": b, "verified": body.verified})))
+}
+
+#[derive(Deserialize)]
+pub struct UnusedIn {
+    not_used: bool,
+}
+
+/// Mark a box as one this company never uses. It stops blocking readiness, but any amount that still
+/// lands in it makes the report fail until the box is verified.
+pub async fn set_not_used(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    Path(b): Path<String>,
+    Json(body): Json<UnusedIn>,
+) -> ApiResult {
+    require_admin(&actor)?;
+    let conn = st.conn.lock().unwrap();
+    let n = if body.not_used {
+        conn.execute("UPDATE vat_box SET not_used = 1, verified = 0, verified_by = NULL, verified_at = NULL WHERE box = ?1 AND box != '49'", params![b])?
+    } else {
+        conn.execute("UPDATE vat_box SET not_used = 0 WHERE box = ?1", params![b])?
+    };
+    if n == 0 {
+        return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such VAT box, or box 49 which is always used"));
+    }
+    crate::ledger::audit(&conn, &actor, if body.not_used { "vat.not_used" } else { "vat.used" }, &b, "")?;
+    Ok(Json(json!({"box": b, "not_used": body.not_used})))
 }
 
 #[derive(Deserialize)]
@@ -299,23 +335,28 @@ pub async fn report(State(st): State<Shared>, Query(q): Query<ReportQuery>) -> A
     let input = amounts.get("48").copied().unwrap_or(0);
     amounts.insert("49".into(), output - input);
 
-    let meta: Vec<(String, String, String, String, bool, Option<String>)> = conn
-        .prepare("SELECT box, label, kind, source, verified, verified_by FROM vat_box ORDER BY box")?
+    let meta: Vec<(String, String, String, String, bool, Option<String>, bool)> = conn
+        .prepare("SELECT box, label, kind, source, verified, verified_by, not_used FROM vat_box ORDER BY box")?
         .query_map([], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get::<_, i64>(4)? != 0, r.get(5)?))
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get::<_, i64>(4)? != 0, r.get(5)?, r.get::<_, i64>(6)? != 0))
         })?
         .filter_map(Result::ok)
         .collect();
     let boxes: Vec<Value> = meta
         .iter()
-        .map(|(b, label, kind, source, verified, by)| {
-            json!({"box": b, "label": label, "kind": kind,
+        .map(|(b, label, kind, source, verified, by, not_used)| {
+            json!({"box": b, "label": label, "kind": kind, "not_used": not_used,
                    "amount": format_amount(amounts.get(b).copied().unwrap_or(0)),
                    "vouchers": contributing.get(b).map(|s| s.iter().cloned().collect::<Vec<_>>()).unwrap_or_default(),
                    "verified": verified, "verified_by": by, "mapping_source": source})
         })
         .collect();
-    let unverified: Vec<String> = meta.iter().filter(|m| !m.4).map(|m| m.0.clone()).collect();
+    let unverified: Vec<String> = meta.iter().filter(|m| !m.4 && !m.6).map(|m| m.0.clone()).collect();
+    let misused: Vec<String> = meta
+        .iter()
+        .filter(|m| m.6 && amounts.get(&m.0).copied().unwrap_or(0) != 0)
+        .map(|m| m.0.clone())
+        .collect();
 
     // Checks that tell the owner what is missing before this can be filed.
     let mut checks: Vec<Value> = vec![];
@@ -330,6 +371,11 @@ pub async fn report(State(st): State<Shared>, Query(q): Query<ReportQuery>) -> A
         } else {
             format!("UNVERIFIED boxes: {}. Check each against SKV 4700, then run `oas vat verify-box <box>`.", unverified.join(", "))
         },
+    );
+    check(
+        "no amount in a box marked not used",
+        misused.is_empty(),
+        if misused.is_empty() { "none".into() } else { format!("amounts landed in boxes marked not used: {}. Verify those boxes, or fix the voucher.", misused.join(", ")) },
     );
     let rc_base = amounts.get("21").copied().unwrap_or(0) + amounts.get("22").copied().unwrap_or(0);
     let rc_out = amounts.get("30").copied().unwrap_or(0);

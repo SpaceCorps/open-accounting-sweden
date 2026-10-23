@@ -49,7 +49,7 @@ oas doc list [--status unlinked|draft|booked] | meta ID [--vendor V --amount A -
 oas bank import FILE.csv | list [--status new|booked|ignored] | match | ignore ID
 oas bank book ID [--description T] --debit ACCOUNT=AMOUNT ... --credit ACCOUNT=AMOUNT ... [--doc ID]...
 oas match list [--status pending|confirmed|declined] | confirm ID | decline ID
-oas vat report [--quarter 2026-Q3] | config | verify-box BOX [--unverify] | map-account ACCOUNT --box BOX
+oas vat report [--quarter 2026-Q3] | config | verify-box BOX [--unverify] | box-not-used BOX [--used] | map-account ACCOUNT --box BOX
 oas employee add NAME --identity YYYYMMDDNNNC | list | deactivate ID
 oas payroll run --period 2026-10 --pay-date 2026-10-25 --line EMPLOYEE_ID=GROSS[:TAX] ...   (admin; TAX in SEK, or GROSS:30% for a percentage)
 oas payroll list | show ID | approve ID | delete ID | agi ID [--out FILE] | rates | set-rate KEY VALUE | verify-rate KEY [--unverify] | not-used KEY [--used]
@@ -274,6 +274,13 @@ enum VatCmd {
         vat_box: String,
         #[arg(long)]
         unverify: bool,
+    },
+    /// Mark a box as never used by this company (stops blocking readiness; amounts in it still fail the report)
+    BoxNotUsed {
+        #[arg(name = "BOX")]
+        vat_box: String,
+        #[arg(long)]
+        used: bool,
     },
     /// Map an account to an output or input VAT box (admin only; clears that box's verification)
     MapAccount {
@@ -1223,6 +1230,10 @@ fn run(cli: Cli) -> Result<(), Failure> {
                 VatCmd::VerifyBox { vat_box, unverify } => {
                     let body = json!({"verified": !unverify});
                     print_value(&call(&cfg, "POST", &format!("/vat/boxes/{}/verify", encode(&vat_box)), Some(&body))?, json_out);
+                }
+                VatCmd::BoxNotUsed { vat_box, used } => {
+                    let body = json!({"not_used": !used});
+                    print_value(&call(&cfg, "POST", &format!("/vat/boxes/{}/unused", encode(&vat_box)), Some(&body))?, json_out);
                 }
                 VatCmd::MapAccount { account, vat_box } => {
                     let body = json!({"account": account, "box": vat_box});

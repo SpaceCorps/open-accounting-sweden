@@ -31,6 +31,7 @@ check "ledger verifies" 'admin ledger verify'
 check "posted entry cannot be edited" '! sqlite3 $T/s.db "UPDATE entry SET debit = 1"'
 check "posted voucher cannot be deleted" '! sqlite3 $T/s.db "DELETE FROM voucher"'
 check "VAT box 21 holds the reverse charge base" 'admin --json vat report --quarter 2026-Q3 | python3 -c "import sys,json; d=json.load(sys.stdin); b={x[\"box\"]:x[\"amount\"] for x in d[\"boxes\"]}; sys.exit(0 if b[\"21\"]==\"1000.00\" and b[\"30\"]==\"250.00\" and b[\"48\"]==\"250.00\" else 1)"'
+check "a box marked not used fails the report if an amount lands in it" 'admin vat box-not-used 21 >/dev/null && admin --json vat report --quarter 2026-Q3 | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if any(c[\"check\"].startswith(\"no amount in a box marked not used\") and not c[\"ok\"] for c in d[\"checks\"]) else 1)" && admin vat box-not-used 21 --used >/dev/null'
 check "a voucher can be corrected once" 'admin voucher correct 1 && ! admin voucher correct 1'
 check "VAT report is not ready while boxes are unverified" 'admin --json vat report --quarter 2026-Q3 | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin)[\"ready_to_file\"] is False else 1)"'
 
