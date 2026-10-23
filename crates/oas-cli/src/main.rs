@@ -1,0 +1,516 @@
+//! `oas`: command line interface for an open-accounting-sweden instance.
+//! YAML on stdout by default, `--json` for agents. Errors are an envelope on stderr
+//! with a stable exit code.
+
+use std::io::{BufRead, IsTerminal, Write};
+use std::path::PathBuf;
+
+use chrono::{Datelike, Duration, Local};
+use clap::{Parser, Subcommand};
+use serde_json::{Value, json};
+
+const AGENT_README: &str = "\
+# oas - agent operating manual
+
+oas talks to a self-hosted open-accounting-sweden instance. Output is YAML on stdout,
+or JSON with --json. Errors are a structured envelope on stderr (JSON with --json).
+
+## Rules
+- Authenticate first: `oas auth login <url>` (token from the OAS_TOKEN of the server).
+- Never invent a project. If the project is missing or unknown the command fails with
+  `project_required` or `project_not_found` and lists known projects. Ask the human,
+  then retry with the confirmed name, or add --create-project once they agree to create it.
+- Prompts only appear on an interactive terminal. Agents never get a prompt.
+- Timed entries use local time in --tz (default Europe/Stockholm).
+
+## Commands
+oas auth login <url> | status
+oas time log --activity A [--project P] --date YYYY-MM-DD --from HH:MM --to HH:MM [--message M] [--create-project]
+oas time start --activity A [--project P] [--message M] [--create-project]
+oas time stop
+oas time list [--from D] [--to D] [--project P] [--activity A]
+oas time report [--week | --month | --from D --to D] [--project P] [--activity A]
+oas time export [--week | --month | --from D --to D] [--project P] [--activity A] [--out FILE]
+oas project add NAME [--alias A]... [--client C] | list
+oas activity add NAME [--message TEMPLATE] | list
+oas agent-readme
+
+## Exit codes
+0 ok, 1 server or unexpected, 2 invalid input / project problem, 3 auth_required,
+4 not_found, 5 conflict (overlap or timer already running), 6 network.
+";
+
+#[derive(Parser)]
+#[command(name = "oas", version, about = "CLI for open-accounting-sweden")]
+struct Cli {
+    /// Print JSON instead of YAML
+    #[arg(long, global = true)]
+    json: bool,
+    #[command(subcommand)]
+    command: Cmd,
+}
+
+#[derive(Subcommand)]
+enum Cmd {
+    /// Log in to an instance and store the token
+    Auth {
+        #[command(subcommand)]
+        action: AuthCmd,
+    },
+    /// Time tracking
+    Time {
+        #[command(subcommand)]
+        action: TimeCmd,
+    },
+    /// Projects
+    Project {
+        #[command(subcommand)]
+        action: ProjectCmd,
+    },
+    /// Activity types
+    Activity {
+        #[command(subcommand)]
+        action: ActivityCmd,
+    },
+    /// Operating manual for agents
+    AgentReadme,
+}
+
+#[derive(Subcommand)]
+enum AuthCmd {
+    Login {
+        url: String,
+        /// Token; omit to be prompted (or read from stdin)
+        #[arg(long)]
+        token: Option<String>,
+    },
+    Status,
+}
+
+#[derive(clap::Args, Clone)]
+struct Range {
+    #[arg(long, conflicts_with_all = ["month", "from", "to"])]
+    week: bool,
+    #[arg(long, conflicts_with_all = ["from", "to"])]
+    month: bool,
+    #[arg(long)]
+    from: Option<String>,
+    #[arg(long)]
+    to: Option<String>,
+    #[arg(long)]
+    project: Option<String>,
+    #[arg(long)]
+    activity: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum TimeCmd {
+    Log {
+        #[arg(long)]
+        activity: String,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        date: String,
+        #[arg(long)]
+        from: String,
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        message: Option<String>,
+        #[arg(long)]
+        tz: Option<String>,
+        #[arg(long)]
+        create_project: bool,
+    },
+    Start {
+        #[arg(long)]
+        activity: String,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        message: Option<String>,
+        #[arg(long)]
+        tz: Option<String>,
+        #[arg(long)]
+        create_project: bool,
+    },
+    Stop,
+    List(Range),
+    Report(Range),
+    Export {
+        #[command(flatten)]
+        range: Range,
+        /// Write to a file instead of stdout
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[arg(long, default_value = "csv")]
+        format: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProjectCmd {
+    Add {
+        name: String,
+        #[arg(long = "alias")]
+        aliases: Vec<String>,
+        #[arg(long)]
+        client: Option<String>,
+    },
+    List,
+}
+
+#[derive(Subcommand)]
+enum ActivityCmd {
+    Add {
+        name: String,
+        #[arg(long)]
+        message: Option<String>,
+    },
+    List,
+}
+
+struct Failure {
+    code: String,
+    message: String,
+    projects: Vec<String>,
+}
+
+impl Failure {
+    fn new(code: &str, message: impl Into<String>) -> Self {
+        Self { code: code.into(), message: message.into(), projects: vec![] }
+    }
+    fn exit_code(&self) -> i32 {
+        match self.code.as_str() {
+            "invalid_input" | "project_required" | "project_not_found" => 2,
+            "auth_required" => 3,
+            "not_found" => 4,
+            "conflict" => 5,
+            "network" => 6,
+            _ => 1,
+        }
+    }
+}
+
+struct Config {
+    url: String,
+    token: String,
+}
+
+fn config_path() -> PathBuf {
+    if let Ok(dir) = std::env::var("OAS_CONFIG_DIR") {
+        return PathBuf::from(dir).join("config.json");
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    PathBuf::from(home).join(".config").join("oas").join("config.json")
+}
+
+fn load_config() -> Result<Config, Failure> {
+    let stored: Option<Value> = std::fs::read_to_string(config_path())
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok());
+    let field = |env: &str, key: &str| {
+        std::env::var(env)
+            .ok()
+            .or_else(|| stored.as_ref().and_then(|v| v[key].as_str().map(String::from)))
+    };
+    match (field("OAS_URL", "url"), field("OAS_TOKEN", "token")) {
+        (Some(url), Some(token)) => Ok(Config { url: url.trim_end_matches('/').into(), token }),
+        _ => Err(Failure::new("auth_required", "not logged in; run `oas auth login <url>`")),
+    }
+}
+
+fn save_config(url: &str, token: &str) -> Result<(), Failure> {
+    let path = config_path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| Failure::new("internal", e.to_string()))?;
+    }
+    let body = json!({"url": url, "token": token}).to_string();
+    std::fs::write(&path, body).map_err(|e| Failure::new("internal", e.to_string()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
+}
+
+fn encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+fn query_string(range: &Range, from: &Option<String>, to: &Option<String>) -> String {
+    let mut parts = vec![];
+    if let Some(f) = from {
+        parts.push(format!("from={}", encode(f)));
+    }
+    if let Some(t) = to {
+        parts.push(format!("to={}", encode(t)));
+    }
+    if let Some(p) = &range.project {
+        parts.push(format!("project={}", encode(p)));
+    }
+    if let Some(a) = &range.activity {
+        parts.push(format!("activity={}", encode(a)));
+    }
+    if parts.is_empty() { String::new() } else { format!("?{}", parts.join("&")) }
+}
+
+fn resolve_range(r: &Range) -> (Option<String>, Option<String>) {
+    let today = Local::now().date_naive();
+    if r.week {
+        let monday = today - Duration::days(today.weekday().num_days_from_monday() as i64);
+        return (Some(monday.to_string()), Some((monday + Duration::days(6)).to_string()));
+    }
+    if r.month {
+        let first = today.with_day(1).unwrap_or(today);
+        let next = if today.month() == 12 {
+            chrono::NaiveDate::from_ymd_opt(today.year() + 1, 1, 1)
+        } else {
+            chrono::NaiveDate::from_ymd_opt(today.year(), today.month() + 1, 1)
+        }
+        .unwrap_or(today);
+        return (Some(first.to_string()), Some((next - Duration::days(1)).to_string()));
+    }
+    (r.from.clone(), r.to.clone())
+}
+
+fn agent() -> ureq::Agent {
+    ureq::Agent::config_builder().http_status_as_error(false).build().into()
+}
+
+fn request(cfg: &Config, method: &str, path: &str, body: Option<&Value>) -> Result<(u16, String), Failure> {
+    let url = format!("{}/api{}", cfg.url, path);
+    let bearer = format!("Bearer {}", cfg.token);
+    let a = agent();
+    let result = match (method, body) {
+        ("GET", _) => a.get(&url).header("Authorization", &bearer).call(),
+        (_, Some(b)) => a
+            .post(&url)
+            .header("Authorization", &bearer)
+            .content_type("application/json")
+            .send(b.to_string().as_bytes()),
+        _ => a
+            .post(&url)
+            .header("Authorization", &bearer)
+            .content_type("application/json")
+            .send(b"{}".as_slice()),
+    };
+    let mut resp = result.map_err(|e| Failure::new("network", format!("cannot reach {}: {e}", cfg.url)))?;
+    let status = resp.status().as_u16();
+    let text = resp
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| Failure::new("network", format!("bad response: {e}")))?;
+    Ok((status, text))
+}
+
+fn failure_from(text: &str) -> Failure {
+    let v: Value = serde_json::from_str(text).unwrap_or(Value::Null);
+    let e = &v["error"];
+    Failure {
+        code: e["code"].as_str().unwrap_or("internal").into(),
+        message: e["message"].as_str().unwrap_or("unexpected server response").into(),
+        projects: e["projects"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            .unwrap_or_default(),
+    }
+}
+
+fn call(cfg: &Config, method: &str, path: &str, body: Option<&Value>) -> Result<Value, Failure> {
+    let (status, text) = request(cfg, method, path, body)?;
+    if (200..300).contains(&status) {
+        serde_json::from_str(&text).map_err(|_| Failure::new("internal", "invalid JSON from server"))
+    } else {
+        Err(failure_from(&text))
+    }
+}
+
+fn ask(prompt: &str) -> String {
+    eprint!("{prompt}");
+    let _ = std::io::stderr().flush();
+    let mut line = String::new();
+    let _ = std::io::stdin().lock().read_line(&mut line);
+    line.trim().to_string()
+}
+
+/// POST a time entry. On a TTY, ask for a missing project or offer to create one;
+/// otherwise return the error so an agent can ask its human.
+fn post_with_project(cfg: &Config, path: &str, mut body: Value) -> Result<Value, Failure> {
+    let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+    loop {
+        match call(cfg, "POST", path, Some(&body)) {
+            Ok(v) => return Ok(v),
+            Err(f) if interactive && f.code == "project_required" => {
+                eprintln!("No project given. Existing projects: {}", f.projects.join(", "));
+                let name = ask("Project (type a new name to create it): ");
+                if name.is_empty() {
+                    return Err(f);
+                }
+                body["project"] = json!(name);
+            }
+            Err(f) if interactive && f.code == "project_not_found" => {
+                let typed = body["project"].as_str().unwrap_or("").to_string();
+                if f.projects.is_empty() {
+                    if ask(&format!("Project '{typed}' not found. Create it? [y/N] ")).to_lowercase() == "y" {
+                        body["create_project"] = json!(true);
+                    } else {
+                        return Err(f);
+                    }
+                } else {
+                    for (i, p) in f.projects.iter().enumerate() {
+                        eprintln!("  {}. {}", i + 1, p);
+                    }
+                    let answer = ask(&format!(
+                        "Pick a number, 'n' to create '{typed}', anything else to cancel: "
+                    ));
+                    if let Ok(n) = answer.parse::<usize>() {
+                        match f.projects.get(n.wrapping_sub(1)) {
+                            Some(p) => body["project"] = json!(p),
+                            None => return Err(f),
+                        }
+                    } else if answer.to_lowercase() == "n" {
+                        body["create_project"] = json!(true);
+                    } else {
+                        return Err(f);
+                    }
+                }
+            }
+            Err(f) => return Err(f),
+        }
+    }
+}
+
+fn print_value(v: &Value, json_out: bool) {
+    if json_out {
+        println!("{}", serde_json::to_string_pretty(v).unwrap_or_default());
+    } else {
+        print!("{}", serde_norway::to_string(v).unwrap_or_default());
+    }
+}
+
+fn run(cli: Cli) -> Result<(), Failure> {
+    let json_out = cli.json;
+    match cli.command {
+        Cmd::AgentReadme => {
+            if json_out {
+                print_value(&json!({"readme": AGENT_README}), true);
+            } else {
+                print!("{AGENT_README}");
+            }
+            Ok(())
+        }
+        Cmd::Auth { action: AuthCmd::Login { url, token } } => {
+            let url = url.trim_end_matches('/').to_string();
+            let token = match token {
+                Some(t) => t,
+                None if std::io::stdin().is_terminal() => rpassword::prompt_password("Token: ")
+                    .map_err(|e| Failure::new("invalid_input", e.to_string()))?,
+                None => ask(""),
+            };
+            let cfg = Config { url: url.clone(), token: token.trim().to_string() };
+            call(&cfg, "GET", "/activities", None)?;
+            save_config(&url, &cfg.token)?;
+            print_value(&json!({"status": "ok", "url": url}), json_out);
+            Ok(())
+        }
+        Cmd::Auth { action: AuthCmd::Status } => {
+            let cfg = load_config()?;
+            call(&cfg, "GET", "/activities", None)?;
+            print_value(&json!({"status": "ok", "url": cfg.url}), json_out);
+            Ok(())
+        }
+        Cmd::Time { action } => {
+            let cfg = load_config()?;
+            match action {
+                TimeCmd::Log { activity, project, date, from, to, message, tz, create_project } => {
+                    let body = json!({"activity": activity, "project": project, "date": date,
+                        "from": from, "to": to, "message": message, "timezone": tz,
+                        "create_project": create_project});
+                    print_value(&post_with_project(&cfg, "/time", body)?, json_out);
+                }
+                TimeCmd::Start { activity, project, message, tz, create_project } => {
+                    let body = json!({"activity": activity, "project": project,
+                        "message": message, "timezone": tz, "create_project": create_project});
+                    print_value(&post_with_project(&cfg, "/time/start", body)?, json_out);
+                }
+                TimeCmd::Stop => print_value(&call(&cfg, "POST", "/time/stop", None)?, json_out),
+                TimeCmd::List(r) => {
+                    let (f, t) = resolve_range(&r);
+                    let q = query_string(&r, &f, &t);
+                    print_value(&call(&cfg, "GET", &format!("/time{q}"), None)?, json_out);
+                }
+                TimeCmd::Report(r) => {
+                    let (f, t) = resolve_range(&r);
+                    let q = query_string(&r, &f, &t);
+                    print_value(&call(&cfg, "GET", &format!("/time/report{q}"), None)?, json_out);
+                }
+                TimeCmd::Export { range, out, format } => {
+                    if format != "csv" {
+                        return Err(Failure::new("invalid_input", "only --format csv is supported"));
+                    }
+                    let (f, t) = resolve_range(&range);
+                    let q = query_string(&range, &f, &t);
+                    let (status, text) = request(&cfg, "GET", &format!("/time/export.csv{q}"), None)?;
+                    if !(200..300).contains(&status) {
+                        return Err(failure_from(&text));
+                    }
+                    match out {
+                        Some(path) => {
+                            std::fs::write(&path, &text)
+                                .map_err(|e| Failure::new("internal", e.to_string()))?;
+                            print_value(&json!({"status": "ok", "file": path.display().to_string()}), json_out);
+                        }
+                        None => print!("{text}"),
+                    }
+                }
+            }
+            Ok(())
+        }
+        Cmd::Project { action } => {
+            let cfg = load_config()?;
+            match action {
+                ProjectCmd::Add { name, aliases, client } => {
+                    let body = json!({"name": name, "aliases": aliases, "client": client});
+                    print_value(&call(&cfg, "POST", "/projects", Some(&body))?, json_out);
+                }
+                ProjectCmd::List => print_value(&call(&cfg, "GET", "/projects", None)?, json_out),
+            }
+            Ok(())
+        }
+        Cmd::Activity { action } => {
+            let cfg = load_config()?;
+            match action {
+                ActivityCmd::Add { name, message } => {
+                    let body = json!({"name": name, "message": message});
+                    print_value(&call(&cfg, "POST", "/activities", Some(&body))?, json_out);
+                }
+                ActivityCmd::List => print_value(&call(&cfg, "GET", "/activities", None)?, json_out),
+            }
+            Ok(())
+        }
+    }
+}
+
+fn main() {
+    let cli = Cli::parse();
+    let json_out = cli.json;
+    if let Err(f) = run(cli) {
+        let envelope = json!({"error": {"code": f.code, "message": f.message, "projects": f.projects}});
+        if json_out {
+            eprintln!("{}", serde_json::to_string(&envelope).unwrap_or_default());
+        } else {
+            eprint!("{}", serde_norway::to_string(&envelope).unwrap_or_default());
+        }
+        std::process::exit(f.exit_code());
+    }
+}
