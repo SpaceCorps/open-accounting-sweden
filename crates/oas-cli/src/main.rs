@@ -33,11 +33,29 @@ oas time report [--week | --month | --from D --to D] [--project P] [--activity A
 oas time export [--week | --month | --from D --to D] [--project P] [--activity A] [--out FILE]
 oas project add NAME [--alias A]... [--client C] | list
 oas activity add NAME [--message TEMPLATE] | list
+oas company set NAME [--org-number N] | show
+oas account list | add NUMBER NAME --kind T|S|K|I
+oas voucher propose --date D --description TEXT [--counterparty C] --debit ACCOUNT=AMOUNT ... --credit ACCOUNT=AMOUNT ...
+oas voucher drafts | list [--from D] [--to D] | show ID | approve ID | reject ID | correct ID
+oas ledger verify | trial-balance [--year Y | --from D --to D] | audit
+oas export sie [--year Y] [--out FILE]
 oas agent-readme
+
+## Ledger rules (read before posting)
+- Agents only PROPOSE. `voucher propose` creates a draft. Approving, rejecting and correcting
+  need the admin token and fail with `forbidden` (exit 7) for an agent token. Tell the human
+  which draft id to approve; never try to work around it.
+- Posted vouchers are append-only and gap-free. A mistake is fixed with `voucher correct`
+  (a reversing voucher), then a new proposal.
+- A voucher must balance (total debit = total credit), amounts in SEK with at most 2 decimals.
+- Run `oas ledger verify` before relying on the books; it checks gaps, balance and the hash chain.
+- The starter chart of accounts is small. Add accounts with `oas account add`.
+- This is bookkeeping preparation, not tax or legal advice.
 
 ## Exit codes
 0 ok, 1 server or unexpected, 2 invalid input / project problem, 3 auth_required,
-4 not_found, 5 conflict (overlap or timer already running), 6 network.
+4 not_found, 5 conflict (overlap, timer running, already corrected), 6 network, 7 forbidden,
+8 integrity_failed (ledger verify found problems).
 ";
 
 #[derive(Parser)]
@@ -72,8 +90,111 @@ enum Cmd {
         #[command(subcommand)]
         action: ActivityCmd,
     },
+    /// Company details used in exports
+    Company {
+        #[command(subcommand)]
+        action: CompanyCmd,
+    },
+    /// Chart of accounts
+    Account {
+        #[command(subcommand)]
+        action: AccountCmd,
+    },
+    /// Vouchers: propose, approve, correct
+    Voucher {
+        #[command(subcommand)]
+        action: VoucherCmd,
+    },
+    /// Ledger checks and reports
+    Ledger {
+        #[command(subcommand)]
+        action: LedgerCmd,
+    },
+    /// Export for accountants and other systems
+    Export {
+        #[command(subcommand)]
+        action: ExportCmd,
+    },
     /// Operating manual for agents
     AgentReadme,
+}
+
+#[derive(Subcommand)]
+enum CompanyCmd {
+    Set {
+        name: String,
+        #[arg(long)]
+        org_number: Option<String>,
+    },
+    Show,
+}
+
+#[derive(Subcommand)]
+enum AccountCmd {
+    List,
+    Add {
+        number: i64,
+        name: String,
+        /// T asset, S liability or equity, K cost, I income
+        #[arg(long)]
+        kind: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum VoucherCmd {
+    /// Propose a draft voucher (needs approval by an admin)
+    Propose {
+        #[arg(long)]
+        date: String,
+        #[arg(long)]
+        description: String,
+        #[arg(long)]
+        counterparty: Option<String>,
+        /// ACCOUNT=AMOUNT, repeatable
+        #[arg(long = "debit")]
+        debits: Vec<String>,
+        /// ACCOUNT=AMOUNT, repeatable
+        #[arg(long = "credit")]
+        credits: Vec<String>,
+    },
+    Drafts,
+    List {
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: Option<String>,
+    },
+    Show { id: i64 },
+    Approve { id: i64 },
+    Reject { id: i64 },
+    /// Post a reversing voucher for a posted voucher
+    Correct { id: i64 },
+}
+
+#[derive(Subcommand)]
+enum LedgerCmd {
+    Verify,
+    TrialBalance {
+        #[arg(long)]
+        year: Option<i32>,
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: Option<String>,
+    },
+    Audit,
+}
+
+#[derive(Subcommand)]
+enum ExportCmd {
+    /// SIE 4 file for one calendar year
+    Sie {
+        #[arg(long)]
+        year: Option<i32>,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -188,6 +309,8 @@ impl Failure {
             "not_found" => 4,
             "conflict" => 5,
             "network" => 6,
+            "forbidden" => 7,
+            "integrity_failed" => 8,
             _ => 1,
         }
     }
@@ -313,6 +436,21 @@ fn request(cfg: &Config, method: &str, path: &str, body: Option<&Value>) -> Resu
     Ok((status, text))
 }
 
+fn request_bytes(cfg: &Config, path: &str) -> Result<(u16, Vec<u8>), Failure> {
+    let url = format!("{}/api{}", cfg.url, path);
+    let mut resp = agent()
+        .get(&url)
+        .header("Authorization", &format!("Bearer {}", cfg.token))
+        .call()
+        .map_err(|e| Failure::new("network", format!("cannot reach {}: {e}", cfg.url)))?;
+    let status = resp.status().as_u16();
+    let bytes = resp
+        .body_mut()
+        .read_to_vec()
+        .map_err(|e| Failure::new("network", format!("bad response: {e}")))?;
+    Ok((status, bytes))
+}
+
 fn failure_from(text: &str) -> Failure {
     let v: Value = serde_json::from_str(text).unwrap_or(Value::Null);
     let e = &v["error"];
@@ -425,8 +563,9 @@ fn run(cli: Cli) -> Result<(), Failure> {
         }
         Cmd::Auth { action: AuthCmd::Status } => {
             let cfg = load_config()?;
-            call(&cfg, "GET", "/activities", None)?;
-            print_value(&json!({"status": "ok", "url": cfg.url}), json_out);
+            let me = call(&cfg, "GET", "/me", None)?;
+            print_value(&json!({"status": "ok", "url": cfg.url, "role": me["role"],
+                "can_approve": me["can_approve"]}), json_out);
             Ok(())
         }
         Cmd::Time { action } => {
@@ -472,6 +611,115 @@ fn run(cli: Cli) -> Result<(), Failure> {
                         }
                         None => print!("{text}"),
                     }
+                }
+            }
+            Ok(())
+        }
+        Cmd::Company { action } => {
+            let cfg = load_config()?;
+            match action {
+                CompanyCmd::Set { name, org_number } => {
+                    let body = json!({"name": name, "org_number": org_number});
+                    print_value(&call(&cfg, "POST", "/company", Some(&body))?, json_out);
+                }
+                CompanyCmd::Show => print_value(&call(&cfg, "GET", "/company", None)?, json_out),
+            }
+            Ok(())
+        }
+        Cmd::Account { action } => {
+            let cfg = load_config()?;
+            match action {
+                AccountCmd::List => print_value(&call(&cfg, "GET", "/accounts", None)?, json_out),
+                AccountCmd::Add { number, name, kind } => {
+                    let body = json!({"number": number, "name": name, "kind": kind});
+                    print_value(&call(&cfg, "POST", "/accounts", Some(&body))?, json_out);
+                }
+            }
+            Ok(())
+        }
+        Cmd::Voucher { action } => {
+            let cfg = load_config()?;
+            match action {
+                VoucherCmd::Propose { date, description, counterparty, debits, credits } => {
+                    let mut lines = vec![];
+                    for (list, side) in [(&debits, "debit"), (&credits, "credit")] {
+                        for item in list {
+                            let (acc, amount) = item.split_once('=').ok_or_else(|| {
+                                Failure::new("invalid_input", format!("expected ACCOUNT=AMOUNT, got '{item}'"))
+                            })?;
+                            let account: i64 = acc.trim().parse().map_err(|_| {
+                                Failure::new("invalid_input", format!("invalid account '{acc}'"))
+                            })?;
+                            lines.push(json!({"account": account, side: amount.trim()}));
+                        }
+                    }
+                    let body = json!({"event_date": date, "description": description,
+                        "counterparty": counterparty, "lines": lines});
+                    print_value(&call(&cfg, "POST", "/drafts", Some(&body))?, json_out);
+                }
+                VoucherCmd::Drafts => print_value(&call(&cfg, "GET", "/drafts", None)?, json_out),
+                VoucherCmd::List { from, to } => {
+                    let mut parts = vec![];
+                    if let Some(f) = from { parts.push(format!("from={}", encode(&f))); }
+                    if let Some(t) = to { parts.push(format!("to={}", encode(&t))); }
+                    let q = if parts.is_empty() { String::new() } else { format!("?{}", parts.join("&")) };
+                    print_value(&call(&cfg, "GET", &format!("/vouchers{q}"), None)?, json_out);
+                }
+                VoucherCmd::Show { id } => {
+                    print_value(&call(&cfg, "GET", &format!("/vouchers/{id}"), None)?, json_out)
+                }
+                VoucherCmd::Approve { id } => {
+                    print_value(&call(&cfg, "POST", &format!("/drafts/{id}/approve"), None)?, json_out)
+                }
+                VoucherCmd::Reject { id } => {
+                    print_value(&call(&cfg, "POST", &format!("/drafts/{id}/reject"), None)?, json_out)
+                }
+                VoucherCmd::Correct { id } => {
+                    print_value(&call(&cfg, "POST", &format!("/vouchers/{id}/correct"), None)?, json_out)
+                }
+            }
+            Ok(())
+        }
+        Cmd::Ledger { action } => {
+            let cfg = load_config()?;
+            match action {
+                LedgerCmd::Verify => {
+                    let v = call(&cfg, "GET", "/ledger/verify", None)?;
+                    print_value(&v, json_out);
+                    if v["ok"] != json!(true) {
+                        return Err(Failure::new(
+                            "integrity_failed",
+                            "ledger verification found problems; see the issues above",
+                        ));
+                    }
+                }
+                LedgerCmd::Audit => print_value(&call(&cfg, "GET", "/audit", None)?, json_out),
+                LedgerCmd::TrialBalance { year, from, to } => {
+                    let mut parts = vec![];
+                    if let Some(y) = year { parts.push(format!("year={y}")); }
+                    if let Some(f) = from { parts.push(format!("from={}", encode(&f))); }
+                    if let Some(t) = to { parts.push(format!("to={}", encode(&t))); }
+                    let q = if parts.is_empty() { String::new() } else { format!("?{}", parts.join("&")) };
+                    print_value(&call(&cfg, "GET", &format!("/reports/trial-balance{q}"), None)?, json_out);
+                }
+            }
+            Ok(())
+        }
+        Cmd::Export { action: ExportCmd::Sie { year, out } } => {
+            let cfg = load_config()?;
+            let q = year.map(|y| format!("?year={y}")).unwrap_or_default();
+            let (status, bytes) = request_bytes(&cfg, &format!("/export/sie{q}"))?;
+            if !(200..300).contains(&status) {
+                return Err(failure_from(&String::from_utf8_lossy(&bytes)));
+            }
+            match out {
+                Some(path) => {
+                    std::fs::write(&path, &bytes).map_err(|e| Failure::new("internal", e.to_string()))?;
+                    print_value(&json!({"status": "ok", "file": path.display().to_string(),
+                        "bytes": bytes.len()}), json_out);
+                }
+                None => {
+                    std::io::stdout().write_all(&bytes).map_err(|e| Failure::new("internal", e.to_string()))?;
                 }
             }
             Ok(())

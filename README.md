@@ -2,7 +2,16 @@
 
 Self-hostable, agentic-first bookkeeping for Swedish small companies (aktiebolag). It keeps the books and the receipts, and prepares every number and document needed for the statutory reports, so an agent (or a human) can review and submit them on time.
 
-> Status: pre-alpha, design phase. Nothing here is tax or legal advice. The company owner stays legally responsible for the books and filings.
+> Status: pre-alpha. Working today: time tracking (projects, activity types, CSV export), an append-only double-entry ledger with propose-and-approve postings, a hash-chained integrity check, SIE 4 export, a trial balance, the `oas` CLI and a web panel. Not built yet: VAT, payroll/AGI, annual report, receipts archive, bank import. Nothing here is tax or legal advice. The company owner stays legally responsible for the books and filings.
+
+## Try it
+
+```bash
+OAS_TOKEN=$(openssl rand -hex 32) OAS_AGENT_TOKEN=$(openssl rand -hex 32) cargo run -p oas-server
+cargo run -p oas-cli -- auth login http://127.0.0.1:8080
+```
+
+`OAS_TOKEN` is the admin token (can approve postings). `OAS_AGENT_TOKEN` is optional and can only propose and read, which is the token to give an agent. Run `oas agent-readme` for the full command list.
 
 ## Goals
 

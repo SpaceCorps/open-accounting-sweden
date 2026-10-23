@@ -21,9 +21,27 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use subtle::ConstantTimeEq;
 
+mod ledger;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Role {
+    Admin,
+    Agent,
+}
+
+impl Role {
+    fn name(self) -> &'static str {
+        match self {
+            Role::Admin => "admin",
+            Role::Agent => "agent",
+        }
+    }
+}
+
 struct AppState {
     conn: Mutex<Connection>,
     token: String,
+    agent_token: Option<String>,
 }
 
 type Shared = Arc<AppState>;
@@ -96,6 +114,8 @@ fn open_db(path: &str) -> Result<Connection, rusqlite::Error> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.execute_batch(SCHEMA)?;
+    conn.execute_batch(ledger::SCHEMA)?;
+    ledger::seed(&conn)?;
     for (name, message) in [
         ("meeting", "Meeting: {topic}"),
         ("building", "Building: {topic}"),
@@ -109,15 +129,29 @@ fn open_db(path: &str) -> Result<Connection, rusqlite::Error> {
     Ok(conn)
 }
 
-async fn auth(State(st): State<Shared>, req: Request<Body>, next: Next) -> Response {
+async fn auth(State(st): State<Shared>, mut req: Request<Body>, next: Next) -> Response {
     let given = req
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .unwrap_or("");
-    let ok: bool = given.as_bytes().ct_eq(st.token.as_bytes()).into();
-    if ok {
+        .unwrap_or("")
+        .to_string();
+    // Both comparisons always run so timing does not reveal which token matched.
+    let is_admin: bool = given.as_bytes().ct_eq(st.token.as_bytes()).into();
+    let is_agent: bool = match &st.agent_token {
+        Some(t) => given.as_bytes().ct_eq(t.as_bytes()).into(),
+        None => false,
+    };
+    let role = if is_admin {
+        Some(Role::Admin)
+    } else if is_agent {
+        Some(Role::Agent)
+    } else {
+        None
+    };
+    if let Some(role) = role {
+        req.extensions_mut().insert(role);
         next.run(req).await
     } else {
         ApiError::new(StatusCode::UNAUTHORIZED, "auth_required", "missing or invalid token")
@@ -600,7 +634,14 @@ async fn main() {
     let bind = std::env::var("OAS_BIND").unwrap_or_else(|_| {
         format!("0.0.0.0:{}", std::env::var("PORT").unwrap_or_else(|_| "8080".into()))
     });
-    let state: Shared = Arc::new(AppState { conn: Mutex::new(conn), token });
+    let agent_token = std::env::var("OAS_AGENT_TOKEN").ok().filter(|t| !t.is_empty());
+    if let Some(t) = &agent_token {
+        if t.len() < 24 || *t == token {
+            eprintln!("OAS_AGENT_TOKEN must be at least 24 characters and differ from OAS_TOKEN");
+            std::process::exit(2);
+        }
+    }
+    let state: Shared = Arc::new(AppState { conn: Mutex::new(conn), token, agent_token });
 
     let api = Router::new()
         .route("/activities", get(list_activities).post(add_activity))
@@ -610,6 +651,19 @@ async fn main() {
         .route("/time/stop", post(stop_timer))
         .route("/time/report", get(report))
         .route("/time/export.csv", get(export_csv))
+        .route("/me", get(ledger::me))
+        .route("/company", get(ledger::get_company).post(ledger::set_company))
+        .route("/accounts", get(ledger::list_accounts).post(ledger::add_account))
+        .route("/drafts", get(ledger::list_drafts).post(ledger::propose))
+        .route("/drafts/{id}/approve", post(ledger::approve))
+        .route("/drafts/{id}/reject", post(ledger::reject))
+        .route("/vouchers", get(ledger::list_vouchers))
+        .route("/vouchers/{id}", get(ledger::get_voucher))
+        .route("/vouchers/{id}/correct", post(ledger::correct))
+        .route("/reports/trial-balance", get(ledger::trial_balance))
+        .route("/ledger/verify", get(ledger::verify))
+        .route("/audit", get(ledger::audit_list))
+        .route("/export/sie", get(ledger::export_sie))
         .layer(middleware::from_fn_with_state(state.clone(), auth));
 
     let app = Router::new()

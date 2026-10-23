@@ -15,12 +15,13 @@
   button { cursor:pointer; background:var(--accent); color:#fff; border-color:var(--accent); }
   button.secondary { background:transparent; color:inherit; border-color:var(--line); }
   .row { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; } .muted { color:var(--muted); }
+  [hidden] { display:none !important; }
   .err { color:#c0392b; } .overflow { overflow-x:auto; }
 </style>
 </head>
 <body>
 <main>
-  <h1>Time tracking</h1>
+  <h1>open-accounting-sweden</h1>
   <div id="login" class="row">
     <input id="token" type="password" placeholder="Access token" autocomplete="off">
     <button id="save">Sign in</button>
@@ -28,6 +29,14 @@
   <p id="msg" class="muted"></p>
 
   <div id="app" hidden>
+    <h2>Ledger</h2>
+    <p id="ledgerstatus" class="muted"></p>
+    <h3>Drafts waiting for approval</h3>
+    <div class="overflow"><table id="drafts"></table></div>
+    <h3>Vouchers</h3>
+    <div class="overflow"><table id="vouchers"></table></div>
+
+    <h2>Time tracking</h2>
     <div class="row">
       <label>From <input id="from" type="date"></label>
       <label>To <input id="to" type="date"></label>
@@ -105,6 +114,7 @@ async function load() {
   ]);
   if (rep.error || ents.error) { $("msg").textContent = (rep.error || ents.error).message; return; }
   $("msg").textContent = "";
+  loadLedger().catch(() => {});
   fill($("activity"), acts.activities.map((a) => a.name));
   fill($("factivity"), acts.activities.map((a) => a.name), "All activities");
   fill($("fproject"), projs.projects.filter((p) => !p.archived).map((p) => p.name), "All projects");
@@ -114,6 +124,36 @@ async function load() {
   table($("byactivity"), ["Activity", "Hours"], Object.entries(rep.by_activity));
   table($("entries"), ["Date", "Start", "End", "Hours", "Project", "Activity", "Message"],
     ents.entries.slice().reverse().map((e) => [e.date, e.start, e.end ?? "running", e.hours, e.project, e.activity, e.message]));
+}
+function draftText(d) {
+  return d.lines.map((l) => l.account + (l.debit !== "0.00" ? " D " + l.debit : " C " + l.credit)).join(", ");
+}
+async function loadLedger() {
+  const [dr, vo, ve, me] = await Promise.all([
+    api("/drafts").then((r) => r.json()), api("/vouchers").then((r) => r.json()),
+    api("/ledger/verify").then((r) => r.json()), api("/me").then((r) => r.json()),
+  ]);
+  $("ledgerstatus").textContent = (ve.ok ? "Ledger verified: " : "LEDGER PROBLEM: ") + ve.vouchers +
+    " vouchers" + (ve.issues.length ? " - " + ve.issues.join("; ") : "") + ". You are signed in as " + me.role + ".";
+  const t = $("drafts"); t.replaceChildren();
+  const head = t.createTHead().insertRow();
+  head.replaceChildren(...["ID", "Date", "Description", "Lines", "By", ""].map((h) => text(document.createElement("th"), h)));
+  const body = t.createTBody();
+  dr.drafts.forEach((d) => {
+    const tr = body.insertRow();
+    [d.id, d.event_date, d.description, draftText(d), d.created_by].forEach((c) => text(tr.insertCell(), String(c)));
+    const cell = tr.insertCell();
+    if (me.can_approve) {
+      const a = text(document.createElement("button"), "Approve");
+      a.onclick = async () => { await api("/drafts/" + d.id + "/approve", { method: "POST" }); load(); };
+      const r = text(document.createElement("button"), "Reject");
+      r.className = "secondary";
+      r.onclick = async () => { await api("/drafts/" + d.id + "/reject", { method: "POST" }); load(); };
+      cell.append(a, " ", r);
+    }
+  });
+  table($("vouchers"), ["No", "Date", "Description", "Lines", "Approved by"],
+    vo.vouchers.slice().reverse().map((v) => [v.label, v.event_date, v.description, draftText(v), v.approved_by]));
 }
 async function post(path, body) {
   let res = await api(path, { method: "POST", body: JSON.stringify(body) });

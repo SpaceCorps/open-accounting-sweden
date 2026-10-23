@@ -149,9 +149,97 @@ pub fn csv_row(fields: &[String]) -> String {
     fields.iter().map(|f| csv_field(f)).collect::<Vec<_>>().join(",")
 }
 
+/// Parse a decimal amount such as "1250", "1250.5" or "1 250,50" into öre.
+/// Negative numbers and more than two decimals are rejected.
+pub fn parse_amount(input: &str) -> Result<i64, String> {
+    let s: String = input.chars().filter(|c| !c.is_whitespace() && *c != '_').collect();
+    let s = s.replace(',', ".");
+    if s.is_empty() {
+        return Err("amount is empty".into());
+    }
+    let (whole, frac) = match s.split_once('.') {
+        Some((w, f)) => (w, f),
+        None => (s.as_str(), ""),
+    };
+    if whole.is_empty() && frac.is_empty()
+        || !whole.chars().all(|c| c.is_ascii_digit())
+        || !frac.chars().all(|c| c.is_ascii_digit())
+        || frac.len() > 2
+        || whole.len() > 12
+    {
+        return Err(format!("invalid amount '{input}': use digits with at most 2 decimals"));
+    }
+    let w: i64 = if whole.is_empty() { 0 } else { whole.parse().map_err(|_| "amount too large")? };
+    let f: i64 = format!("{frac:0<2}").parse().unwrap_or(0);
+    Ok(w * 100 + f)
+}
+
+/// Format öre as a decimal string with two decimals, e.g. 125050 -> "1250.50".
+pub fn format_amount(ore: i64) -> String {
+    let sign = if ore < 0 { "-" } else { "" };
+    let a = ore.abs();
+    format!("{sign}{}.{:02}", a / 100, a % 100)
+}
+
+/// Encode text as code page 437 (SIE "PC8"). Unknown characters become '?'.
+pub fn to_cp437(s: &str) -> Vec<u8> {
+    s.chars()
+        .map(|c| match c {
+            c if (c as u32) < 0x80 => c as u8,
+            'Ç' => 0x80,
+            'ü' => 0x81,
+            'é' => 0x82,
+            'ä' => 0x84,
+            'å' => 0x86,
+            'ö' => 0x94,
+            'Ä' => 0x8E,
+            'Å' => 0x8F,
+            'É' => 0x90,
+            'Ö' => 0x99,
+            'Ü' => 0x9A,
+            '€' => b'E',
+            _ => b'?',
+        })
+        .collect()
+}
+
+/// Quote a SIE text field: wrap in double quotes and escape quotes and newlines.
+pub fn sie_quote(s: &str) -> String {
+    let cleaned: String = s
+        .chars()
+        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+        .collect();
+    format!("\"{}\"", cleaned.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn amounts_round_trip() {
+        assert_eq!(parse_amount("1250"), Ok(125000));
+        assert_eq!(parse_amount("1 250,5"), Ok(125050));
+        assert_eq!(parse_amount("0.07"), Ok(7));
+        assert_eq!(format_amount(125050), "1250.50");
+        assert_eq!(format_amount(-7), "-0.07");
+        assert!(parse_amount("-5").is_err());
+        assert!(parse_amount("1.234").is_err());
+        assert!(parse_amount("abc").is_err());
+        assert!(parse_amount("").is_err());
+    }
+
+    #[test]
+    fn cp437_encodes_swedish_letters() {
+        assert_eq!(to_cp437("åäö"), vec![0x86, 0x84, 0x94]);
+        assert_eq!(to_cp437("ÅÄÖ"), vec![0x8F, 0x8E, 0x99]);
+        assert_eq!(to_cp437("abc"), b"abc".to_vec());
+    }
+
+    #[test]
+    fn sie_quote_escapes() {
+        assert_eq!(sie_quote("a \"b\""), "\"a \\\"b\\\"\"");
+    }
 
     fn project(id: i64, name: &str, aliases: &[&str], archived: bool) -> Project {
         Project {
