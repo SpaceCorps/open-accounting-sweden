@@ -7,9 +7,9 @@ import { BookPlus, Check, EyeOff, Plus, RefreshCw, Trash2, Upload, X } from "luc
 import { useRef, useState } from "react";
 import { api, importBankCsv, type Account, type BankTx, type Doc, type Me, type MatchItem } from "../api";
 import { useData } from "../hooks";
-import { EmptyNote, Kpi, PageHeader, Section, TextField, notifyError, notifyOk } from "../kit";
+import { EmptyNote, Kpi, PageHeader, Section, TextField, VatCodeSelect, notifyError, notifyOk, type VatCode } from "../kit";
 
-interface Row { account: string; debit: string; credit: string }
+interface Row { account: string; debit: string; credit: string; vat: string }
 const num = (s: string) => (s.trim() === "" ? 0 : parseFloat(s.replace(",", ".")) || 0);
 
 function BookDialog(props: {
@@ -21,8 +21,9 @@ function BookDialog(props: {
   onDone: () => void;
 }) {
   const { tx } = props;
+  const vatCfg = useData<{ codes: VatCode[] }>("/vat/config");
   const [description, setDescription] = useState("");
-  const [rows, setRows] = useState<Row[]>([{ account: "", debit: "", credit: "" }]);
+  const [rows, setRows] = useState<Row[]>([{ account: "", debit: "", credit: "", vat: "" }]);
   const [picked, setPicked] = useState<number[]>([]);
   const [loaded, setLoaded] = useState<number | null>(null);
 
@@ -30,7 +31,7 @@ function BookDialog(props: {
     setLoaded(tx.id);
     setDescription(tx.counterparty || tx.reference);
     const out = parseFloat(tx.amount) < 0;
-    setRows([{ account: "", debit: out ? Math.abs(parseFloat(tx.amount)).toFixed(2) : "", credit: out ? "" : parseFloat(tx.amount).toFixed(2) }]);
+    setRows([{ account: "", debit: out ? Math.abs(parseFloat(tx.amount)).toFixed(2) : "", credit: out ? "" : parseFloat(tx.amount).toFixed(2), vat: "" }]);
     setPicked(props.confirmedDocIds);
   }
 
@@ -55,6 +56,7 @@ function BookDialog(props: {
           lines: rows.filter((r) => r.account).map((r) => ({
             account: Number(r.account),
             ...(num(r.debit) > 0 ? { debit: r.debit } : { credit: r.credit }),
+            vat_code: r.vat || null,
           })),
         },
       });
@@ -78,7 +80,7 @@ function BookDialog(props: {
         </DialogHeader>
         <div className="oas-form">
           <TextField label="Description" value={description} onChange={setDescription} />
-          <div className="oas-lines oas-muted"><span>Account</span><span>Debit</span><span>Credit</span><span /></div>
+          <div className="oas-lines oas-muted"><span>Account</span><span>Debit</span><span>Credit</span><span>VAT code</span><span /></div>
           {rows.map((r, i) => (
             <div className="oas-lines" key={i}>
               <Select value={r.account} onValueChange={(v) => set(i, { account: v })}>
@@ -89,11 +91,12 @@ function BookDialog(props: {
               </Select>
               <Input inputMode="decimal" value={r.debit} onChange={(e) => set(i, { debit: e.target.value, credit: "" })} placeholder="0.00" />
               <Input inputMode="decimal" value={r.credit} onChange={(e) => set(i, { credit: e.target.value, debit: "" })} placeholder="0.00" />
+              <VatCodeSelect value={r.vat} onChange={(v) => set(i, { vat: v })} codes={vatCfg.data?.codes ?? []} />
               <Button variant="ghost" size="icon" aria-label="Remove line" disabled={rows.length <= 1} onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}><Trash2 /></Button>
             </div>
           ))}
           <div className="oas-actions">
-            <Button variant="outline" size="sm" onClick={() => setRows((rs) => [...rs, { account: "", debit: "", credit: "" }])}><Plus /> Add line</Button>
+            <Button variant="outline" size="sm" onClick={() => setRows((rs) => [...rs, { account: "", debit: "", credit: "", vat: "" }])}><Plus /> Add line</Button>
             <Badge variant={balanced ? "success" : "warning"}>
               other lines net {net.toFixed(2)}, bank {total.toFixed(2)} {balanced ? "balanced" : "not balanced"}
             </Badge>

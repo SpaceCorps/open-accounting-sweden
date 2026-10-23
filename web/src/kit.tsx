@@ -121,3 +121,22 @@ export function ConfirmDialog(props: {
     </AlertDialog>
   );
 }
+
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@spacecorps/components/ui";
+
+export interface VatCode { code: string; label: string; base_box: string | null }
+
+/** Optional VAT code for the net line of a voucher. An empty value means no code. */
+export function VatCodeSelect(props: { value: string; onChange: (v: string) => void; codes: VatCode[] }) {
+  return (
+    <Select value={props.value || "none"} onValueChange={(v) => props.onChange(v === "none" ? "" : v)}>
+      <SelectTrigger aria-label="VAT code"><SelectValue placeholder="VAT code" /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="none">No VAT code</SelectItem>
+        {props.codes.map((c) => (
+          <SelectItem key={c.code} value={c.code}>{c.code}: {c.label}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}

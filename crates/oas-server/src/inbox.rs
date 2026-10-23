@@ -628,9 +628,9 @@ pub async fn book_tx(
     let mut lines = b.lines;
     let bank_amount = format_amount(amount.abs());
     lines.push(if amount < 0 {
-        LineIn { account: bank_account, debit: None, credit: Some(bank_amount) }
+        LineIn { account: bank_account, debit: None, credit: Some(bank_amount), vat_code: None }
     } else {
-        LineIn { account: bank_account, debit: Some(bank_amount), credit: None }
+        LineIn { account: bank_account, debit: Some(bank_amount), credit: None, vat_code: None }
     });
     let mut documents = b.documents;
     let confirmed: Vec<i64> = conn

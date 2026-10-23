@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS draft_line(
   account INTEGER NOT NULL REFERENCES account(number),
   debit INTEGER NOT NULL DEFAULT 0,
   credit INTEGER NOT NULL DEFAULT 0,
+  vat_code TEXT,
   CHECK (debit >= 0 AND credit >= 0 AND (debit = 0 OR credit = 0) AND debit + credit > 0)
 );
 CREATE TABLE IF NOT EXISTS voucher(
@@ -71,6 +72,7 @@ CREATE TABLE IF NOT EXISTS entry(
   account INTEGER NOT NULL REFERENCES account(number),
   debit INTEGER NOT NULL,
   credit INTEGER NOT NULL,
+  vat_code TEXT,
   CHECK (debit >= 0 AND credit >= 0 AND (debit = 0 OR credit = 0) AND debit + credit > 0)
 );
 CREATE TABLE IF NOT EXISTS audit_log(
@@ -111,6 +113,12 @@ const SEED: &[(i64, &str, &str)] = &[
     (2731, "Avrakning lagstadgade sociala avgifter", "S"),
     (3041, "Forsaljning tjanster Sverige 25 procent moms", "I"),
     (5410, "Forbrukningsinventarier", "K"),
+    (2621, "Utgaende moms forsaljning Sverige 12 procent", "S"),
+    (2624, "Utgaende moms omvand skattskyldighet 12 procent", "S"),
+    (2631, "Utgaende moms forsaljning Sverige 6 procent", "S"),
+    (2634, "Utgaende moms omvand skattskyldighet 6 procent", "S"),
+    (2640, "Ingaende moms", "S"),
+    (2650, "Redovisningskonto for moms", "S"),
     (6540, "IT-tjanster", "K"),
     (6570, "Bankkostnader", "K"),
     (7210, "Loner till tjansteman", "K"),
@@ -152,10 +160,30 @@ pub(crate) struct LineIn {
     pub(crate) account: i64,
     pub(crate) debit: Option<String>,
     pub(crate) credit: Option<String>,
+    #[serde(default)]
+    pub(crate) vat_code: Option<String>,
+}
+
+/// A ledger line in öre: account, debit, credit and an optional VAT code on the net amount.
+pub(crate) type Ln = (i64, i64, i64, Option<String>);
+
+/// Add the VAT code column to databases created before VAT codes existed.
+pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
+    for t in ["draft_line", "entry"] {
+        let has: i64 = conn.query_row(
+            &format!("SELECT COUNT(*) FROM pragma_table_info('{t}') WHERE name = 'vat_code'"),
+            [],
+            |r| r.get(0),
+        )?;
+        if has == 0 {
+            conn.execute_batch(&format!("ALTER TABLE {t} ADD COLUMN vat_code TEXT"))?;
+        }
+    }
+    Ok(())
 }
 
 /// Validate lines and return (account, debit, credit) in öre.
-fn validate_lines(conn: &Connection, lines: &[LineIn]) -> Result<Vec<(i64, i64, i64)>, ApiError> {
+fn validate_lines(conn: &Connection, lines: &[LineIn]) -> Result<Vec<Ln>, ApiError> {
     if lines.len() < 2 {
         return Err(ApiError::invalid("a voucher needs at least two lines"));
     }
@@ -181,9 +209,17 @@ fn validate_lines(conn: &Connection, lines: &[LineIn]) -> Result<Vec<(i64, i64, 
         if d > MAX_ORE || c > MAX_ORE {
             return Err(ApiError::invalid("amount too large"));
         }
+        let vat = l.vat_code.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(str::to_uppercase);
+        if let Some(code) = &vat {
+            let known: i64 =
+                conn.query_row("SELECT COUNT(*) FROM vat_code WHERE code = ?1", params![code], |r| r.get(0))?;
+            if known == 0 {
+                return Err(ApiError::invalid(format!("unknown VAT code {code}")));
+            }
+        }
         dsum += d;
         csum += c;
-        out.push((l.account, d, c));
+        out.push((l.account, d, c, vat));
     }
     if dsum != csum {
         return Err(ApiError::invalid(format!(
@@ -231,13 +267,13 @@ pub(crate) fn draft_view(conn: &Connection, id: i64) -> Result<Value, ApiError> 
         )
         .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such draft"))?;
     let mut stmt =
-        conn.prepare("SELECT account, debit, credit FROM draft_line WHERE draft_id = ?1 ORDER BY id")?;
+        conn.prepare("SELECT account, debit, credit, vat_code FROM draft_line WHERE draft_id = ?1 ORDER BY id")?;
     let lines: Vec<Value> = stmt
-        .query_map(params![id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)))?
+        .query_map(params![id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, Option<String>>(3)?)))?
         .filter_map(Result::ok)
-        .map(|(a, d, c)| {
+        .map(|(a, d, c, v)| {
             json!({"account": a, "name": account_name(conn, a),
-                   "debit": format_amount(d), "credit": format_amount(c)})
+                   "debit": format_amount(d), "credit": format_amount(c), "vat_code": v})
         })
         .collect();
     let documents: Vec<Value> = conn
@@ -253,10 +289,10 @@ pub(crate) fn draft_view(conn: &Connection, id: i64) -> Result<Value, ApiError> 
               "bank_transaction_id": bank_tx}))
 }
 
-fn voucher_lines(conn: &Connection, voucher_id: i64) -> Result<Vec<(i64, i64, i64)>, ApiError> {
+fn voucher_lines(conn: &Connection, voucher_id: i64) -> Result<Vec<Ln>, ApiError> {
     let mut stmt =
-        conn.prepare("SELECT account, debit, credit FROM entry WHERE voucher_id = ?1 ORDER BY line_no")?;
-    let rows = stmt.query_map(params![voucher_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        conn.prepare("SELECT account, debit, credit, vat_code FROM entry WHERE voucher_id = ?1 ORDER BY line_no")?;
+    let rows = stmt.query_map(params![voucher_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
@@ -287,9 +323,9 @@ fn voucher_view(conn: &Connection, id: i64) -> Result<Value, ApiError> {
         .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such voucher"))?;
     let lines: Vec<Value> = voucher_lines(conn, id)?
         .into_iter()
-        .map(|(a, d, c)| {
+        .map(|(a, d, c, v)| {
             json!({"account": a, "name": account_name(conn, a),
-                   "debit": format_amount(d), "credit": format_amount(c)})
+                   "debit": format_amount(d), "credit": format_amount(c), "vat_code": v})
         })
         .collect();
     let documents: Vec<Value> = conn
@@ -312,9 +348,12 @@ fn canonical(
     desc: &str,
     cp: &str,
     corrects: Option<i64>,
-    lines: &[(i64, i64, i64)],
+    lines: &[Ln],
 ) -> String {
-    let body: Vec<String> = lines.iter().map(|(a, d, c)| format!("{a}:{d}:{c}")).collect();
+    let body: Vec<String> = lines
+        .iter()
+        .map(|(a, d, c, v)| format!("{a}:{d}:{c}:{}", v.as_deref().unwrap_or("")))
+        .collect();
     let text = format!(
         "{prev_hash}|{series}|{number}|{compile}|{event}|{desc}|{cp}|{}|{}",
         corrects.map(|c| c.to_string()).unwrap_or_default(),
@@ -334,7 +373,7 @@ fn post_voucher(
     approved_by: &str,
     created_at: &str,
     corrects: Option<i64>,
-    lines: &[(i64, i64, i64)],
+    lines: &[Ln],
 ) -> Result<i64, ApiError> {
     let number: i64 = conn.query_row(
         "SELECT COALESCE(MAX(number), 0) + 1 FROM voucher WHERE series = ?1",
@@ -358,10 +397,10 @@ fn post_voucher(
                 approved_by, created_at, corrects, prev_hash, hash],
     )?;
     let id = conn.last_insert_rowid();
-    for (i, (a, d, c)) in lines.iter().enumerate() {
+    for (i, (a, d, c, v)) in lines.iter().enumerate() {
         conn.execute(
-            "INSERT INTO entry(voucher_id, line_no, account, debit, credit) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![id, i as i64 + 1, a, d, c],
+            "INSERT INTO entry(voucher_id, line_no, account, debit, credit, vat_code) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, i as i64 + 1, a, d, c, v],
         )?;
     }
     Ok(id)
@@ -497,10 +536,10 @@ pub(crate) fn create_draft(conn: &mut Connection, actor: &Actor, b: &NewDraft) -
         params![b.event_date, description, counterparty, actor.name.as_str(), oas_core::utc_string(Utc::now())],
     )?;
     let id = tx.last_insert_rowid();
-    for (a, d, c) in &lines {
+    for (a, d, c, v) in &lines {
         tx.execute(
-            "INSERT INTO draft_line(draft_id, account, debit, credit) VALUES (?1, ?2, ?3, ?4)",
-            params![id, a, d, c],
+            "INSERT INTO draft_line(draft_id, account, debit, credit, vat_code) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![id, a, d, c, v],
         )?;
     }
     for d in &b.documents {
@@ -551,9 +590,9 @@ pub async fn approve(
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         )
         .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such draft"))?;
-    let lines: Vec<(i64, i64, i64)> = tx
-        .prepare("SELECT account, debit, credit FROM draft_line WHERE draft_id = ?1 ORDER BY id")?
-        .query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+    let lines: Vec<Ln> = tx
+        .prepare("SELECT account, debit, credit, vat_code FROM draft_line WHERE draft_id = ?1 ORDER BY id")?
+        .query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
         .filter_map(Result::ok)
         .collect();
     let dsum: i64 = lines.iter().map(|l| l.1).sum();
@@ -645,8 +684,8 @@ pub async fn correct(
     if already > 0 {
         return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "voucher is already corrected"));
     }
-    let reversed: Vec<(i64, i64, i64)> =
-        voucher_lines(&tx, id)?.into_iter().map(|(a, d, c)| (a, c, d)).collect();
+    let reversed: Vec<Ln> =
+        voucher_lines(&tx, id)?.into_iter().map(|(a, d, c, v)| (a, c, d, v)).collect();
     let text = format!("Rattelse av {series}{number}: {description}");
     let vid = post_voucher(
         &tx, &event_date, &text, &counterparty, actor.name.as_str(), actor.name.as_str(),
@@ -817,7 +856,7 @@ pub async fn export_sie(State(st): State<Shared>, Query(q): Query<Range>) -> Res
             sie_quote(series), sie_quote(&number.to_string()), compact(event), sie_quote(desc),
             compact(compile), sie_quote(approver)
         ));
-        for (a, d, c) in voucher_lines(&conn, *id)? {
+        for (a, d, c, _) in voucher_lines(&conn, *id)? {
             out.push_str(&format!("#TRANS {a} {{}} {}\r\n", format_amount(d - c)));
         }
         out.push_str("}\r\n");

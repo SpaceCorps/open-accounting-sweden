@@ -24,6 +24,7 @@ use subtle::ConstantTimeEq;
 mod auth;
 mod inbox;
 mod ledger;
+mod vat;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Role {
@@ -130,7 +131,10 @@ fn open_db(path: &str) -> Result<Connection, rusqlite::Error> {
     conn.execute_batch(ledger::SCHEMA)?;
     conn.execute_batch(auth::SCHEMA)?;
     conn.execute_batch(inbox::SCHEMA)?;
+    conn.execute_batch(vat::SCHEMA)?;
+    ledger::migrate(&conn)?;
     ledger::seed(&conn)?;
+    vat::seed(&conn)?;
     for (name, message) in [
         ("meeting", "Meeting: {topic}"),
         ("building", "Building: {topic}"),
@@ -713,6 +717,10 @@ async fn main() {
         .route("/bank/transactions/{id}/ignore", post(inbox::ignore_tx))
         .route("/bank/transactions/{id}/book", post(inbox::book_tx))
         .route("/bank/match", post(inbox::run_match))
+        .route("/vat/config", get(vat::config))
+        .route("/vat/report", get(vat::report))
+        .route("/vat/boxes/{box}/verify", post(vat::verify_box))
+        .route("/vat/accounts", post(vat::map_account))
         .route("/matches", get(inbox::list_matches))
         .route("/matches/{id}/confirm", post(inbox::confirm_match))
         .route("/matches/{id}/decline", post(inbox::decline_match))

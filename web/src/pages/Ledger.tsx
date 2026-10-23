@@ -7,13 +7,14 @@ import { Download, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { api, download, type Account, type Draft, type Me, type Voucher } from "../api";
 import { useData } from "../hooks";
-import { EmptyNote, Field, Kpi, PageHeader, Section, TextField, notifyError, notifyOk } from "../kit";
+import { EmptyNote, Field, Kpi, PageHeader, Section, TextField, VatCodeSelect, notifyError, notifyOk, type VatCode } from "../kit";
 import { DraftsTable, VouchersTable } from "./shared";
 
-interface DraftLine { account: string; debit: string; credit: string }
+interface DraftLine { account: string; debit: string; credit: string; vat: string }
 
 function NewDraftDialog({ open, onOpenChange, accounts, onDone }: { open: boolean; onOpenChange: (o: boolean) => void; accounts: Account[]; onDone: () => void }) {
-  const blank = (): DraftLine[] => [{ account: "", debit: "", credit: "" }, { account: "", debit: "", credit: "" }];
+  const vatCfg = useData<{ codes: VatCode[] }>("/vat/config");
+  const blank = (): DraftLine[] => [{ account: "", debit: "", credit: "", vat: "" }, { account: "", debit: "", credit: "", vat: "" }];
   const [date, setDate] = useState(new Date().toLocaleDateString("sv-SE"));
   const [description, setDescription] = useState("");
   const [counterparty, setCounterparty] = useState("");
@@ -35,6 +36,7 @@ function NewDraftDialog({ open, onOpenChange, accounts, onDone }: { open: boolea
           lines: lines.filter((l) => l.account).map((l) => ({
             account: Number(l.account),
             ...(num(l.debit) > 0 ? { debit: l.debit } : { credit: l.credit }),
+            vat_code: l.vat || null,
           })),
         },
       });
@@ -61,7 +63,7 @@ function NewDraftDialog({ open, onOpenChange, accounts, onDone }: { open: boolea
             <TextField label="Counterparty" value={counterparty} onChange={setCounterparty} />
           </div>
           <div className="oas-form">
-            <div className="oas-lines oas-muted"><span>Account</span><span>Debit</span><span>Credit</span><span /></div>
+            <div className="oas-lines oas-muted"><span>Account</span><span>Debit</span><span>Credit</span><span>VAT code</span><span /></div>
             {lines.map((l, i) => (
               <div className="oas-lines" key={i}>
                 <Select value={l.account} onValueChange={(v) => set(i, { account: v })}>
@@ -72,11 +74,12 @@ function NewDraftDialog({ open, onOpenChange, accounts, onDone }: { open: boolea
                 </Select>
                 <Input inputMode="decimal" value={l.debit} onChange={(e) => set(i, { debit: e.target.value, credit: "" })} placeholder="0.00" />
                 <Input inputMode="decimal" value={l.credit} onChange={(e) => set(i, { credit: e.target.value, debit: "" })} placeholder="0.00" />
+                <VatCodeSelect value={l.vat} onChange={(v) => set(i, { vat: v })} codes={vatCfg.data?.codes ?? []} />
                 <Button variant="ghost" size="icon" aria-label="Remove line" disabled={lines.length <= 2} onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}><Trash2 /></Button>
               </div>
             ))}
             <div className="oas-actions">
-              <Button variant="outline" size="sm" onClick={() => setLines((ls) => [...ls, { account: "", debit: "", credit: "" }])}><Plus /> Add line</Button>
+              <Button variant="outline" size="sm" onClick={() => setLines((ls) => [...ls, { account: "", debit: "", credit: "", vat: "" }])}><Plus /> Add line</Button>
               <Badge variant={balanced ? "success" : "warning"}>
                 debit {debit.toFixed(2)} / credit {credit.toFixed(2)} {balanced ? "balanced" : "not balanced"}
               </Badge>

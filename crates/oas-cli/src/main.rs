@@ -49,7 +49,19 @@ oas doc list [--status unlinked|draft|booked] | meta ID [--vendor V --amount A -
 oas bank import FILE.csv | list [--status new|booked|ignored] | match | ignore ID
 oas bank book ID [--description T] --debit ACCOUNT=AMOUNT ... --credit ACCOUNT=AMOUNT ... [--doc ID]...
 oas match list [--status pending|confirmed|declined] | confirm ID | decline ID
+oas vat report [--quarter 2026-Q3] | config | verify-box BOX [--unverify] | map-account ACCOUNT --box BOX
 oas agent-readme
+
+## VAT
+- Give each ledger line a VAT code where it applies, with --debit ACCOUNT=AMOUNT@CODE (for
+  example 6540=1000@RCEU). The code goes on the NET line: RCEU or RCNONEU for a reverse charge
+  purchase of services from an EU or non-EU supplier, S25/S12/S6 for a sale, SEUSVC for a service
+  sold to another EU country. VAT itself goes on the VAT accounts (2611, 2614, 2641, 2645 ...),
+  which are mapped to boxes. Reverse charge needs three lines: net cost with @RCEU, input VAT on
+  2645 and output VAT on 2614.
+- `oas vat report --quarter 2026-Q3` computes every box and lists checks. It never files anything.
+- Every box starts UNVERIFIED. Only the owner marks a box verified, after checking it against
+  Skatteverket's SKV 4700. Do not tell the owner a return is ready while `ready_to_file` is false.
 
 ## Receipts and bank lines
 - Read each receipt yourself and pass what you read: `oas doc add receipt.pdf --vendor 'Amazon Web
@@ -147,6 +159,11 @@ enum Cmd {
         #[command(subcommand)]
         action: ExportCmd,
     },
+    /// VAT return preparation
+    Vat {
+        #[command(subcommand)]
+        action: VatCmd,
+    },
     /// Receipts and invoices
     Doc {
         #[command(subcommand)]
@@ -164,6 +181,31 @@ enum Cmd {
     },
     /// Operating manual for agents
     AgentReadme,
+}
+
+#[derive(Subcommand)]
+enum VatCmd {
+    /// Compute the boxes for a quarter and list what is still missing
+    Report {
+        /// For example 2026-Q3; defaults to the current quarter
+        #[arg(long)]
+        quarter: Option<String>,
+    },
+    /// Show boxes, VAT codes and account mappings
+    Config,
+    /// Mark a box as checked against Skatteverket (admin only)
+    VerifyBox {
+        #[arg(name = "BOX")]
+        vat_box: String,
+        #[arg(long)]
+        unverify: bool,
+    },
+    /// Map an account to an output or input VAT box (admin only; clears that box's verification)
+    MapAccount {
+        account: i64,
+        #[arg(long = "box")]
+        vat_box: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -925,7 +967,11 @@ fn run(cli: Cli) -> Result<(), Failure> {
                             let account: i64 = acc.trim().parse().map_err(|_| {
                                 Failure::new("invalid_input", format!("invalid account '{acc}'"))
                             })?;
-                            lines.push(json!({"account": account, side: amount.trim()}));
+                            let (amount, vat) = match amount.split_once('@') {
+                                Some((a, v)) => (a, Some(v.trim().to_string())),
+                                None => (amount, None),
+                            };
+                            lines.push(json!({"account": account, side: amount.trim(), "vat_code": vat}));
                         }
                     }
                     let body = json!({"event_date": date, "description": description,
@@ -999,6 +1045,25 @@ fn run(cli: Cli) -> Result<(), Failure> {
             }
             Ok(())
         }
+        Cmd::Vat { action } => {
+            let cfg = load_config()?;
+            match action {
+                VatCmd::Report { quarter } => {
+                    let q = quarter.map(|q| format!("?quarter={}", encode(&q))).unwrap_or_default();
+                    print_value(&call(&cfg, "GET", &format!("/vat/report{q}"), None)?, json_out);
+                }
+                VatCmd::Config => print_value(&call(&cfg, "GET", "/vat/config", None)?, json_out),
+                VatCmd::VerifyBox { vat_box, unverify } => {
+                    let body = json!({"verified": !unverify});
+                    print_value(&call(&cfg, "POST", &format!("/vat/boxes/{}/verify", encode(&vat_box)), Some(&body))?, json_out);
+                }
+                VatCmd::MapAccount { account, vat_box } => {
+                    let body = json!({"account": account, "box": vat_box});
+                    print_value(&call(&cfg, "POST", "/vat/accounts", Some(&body))?, json_out);
+                }
+            }
+            Ok(())
+        }
         Cmd::Doc { action } => {
             let cfg = load_config()?;
             match action {
@@ -1061,7 +1126,11 @@ fn run(cli: Cli) -> Result<(), Failure> {
                             let account: i64 = acc.trim().parse().map_err(|_| {
                                 Failure::new("invalid_input", format!("invalid account '{acc}'"))
                             })?;
-                            lines.push(json!({"account": account, side: amount.trim()}));
+                            let (amount, vat) = match amount.split_once('@') {
+                                Some((a, v)) => (a, Some(v.trim().to_string())),
+                                None => (amount, None),
+                            };
+                            lines.push(json!({"account": account, side: amount.trim(), "vat_code": vat}));
                         }
                     }
                     let body = json!({"description": description, "lines": lines, "documents": docs,
