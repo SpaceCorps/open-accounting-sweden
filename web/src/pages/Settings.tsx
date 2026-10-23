@@ -12,18 +12,24 @@ interface User { username: string; role: string; created_at: string }
 interface Token { id: number; name: string; created_at: string; last_used_at: string | null }
 
 function CompanySection({ canEdit }: { canEdit: boolean }) {
-  const company = useData<{ company: { name: string; org_number: string } | null }>("/company");
+  const company = useData<{ company: { name: string; org_number: string; contact_name: string; contact_phone: string; contact_email: string } | null }>("/company");
   const [name, setName] = useState("");
   const [org, setOrg] = useState("");
+  const [cname, setCname] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
   useEffect(() => {
     if (company.data?.company) {
       setName(company.data.company.name);
       setOrg(company.data.company.org_number);
+      setCname(company.data.company.contact_name);
+      setPhone(company.data.company.contact_phone);
+      setEmail(company.data.company.contact_email);
     }
   }, [company.data]);
   async function save() {
     try {
-      await api("/company", { method: "POST", body: { name, org_number: org } });
+      await api("/company", { method: "POST", body: { name, org_number: org, contact_name: cname, contact_phone: phone, contact_email: email } });
       notifyOk("Company saved");
       company.reload();
     } catch (e) {
@@ -31,10 +37,13 @@ function CompanySection({ canEdit }: { canEdit: boolean }) {
     }
   }
   return (
-    <Section title="Company" description="Used in the SIE export header.">
+    <Section title="Company" description="Used in the SIE export header and the AGI file.">
       <div className="oas-form" style={{ maxWidth: 420 }}>
         <TextField label="Company name" value={name} onChange={setName} />
-        <TextField label="Organisation number" value={org} onChange={setOrg} placeholder="559000-0000" />
+        <TextField label="Organisation number" value={org} onChange={setOrg} placeholder="556026-9986" />
+        <TextField label="Technical contact name" value={cname} onChange={setCname} hint="Named in the AGI file sent to Skatteverket" />
+        <TextField label="Contact phone" value={phone} onChange={setPhone} />
+        <TextField label="Contact email" value={email} onChange={setEmail} />
         <div><Button disabled={!canEdit || !name.trim()} onClick={() => void save()}>Save</Button></div>
         {!canEdit ? <p className="oas-muted">Only an admin can change company details.</p> : null}
       </div>

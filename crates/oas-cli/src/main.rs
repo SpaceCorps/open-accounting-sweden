@@ -38,7 +38,7 @@ oas time report [--week | --month | --from D --to D] [--project P] [--activity A
 oas time export [--week | --month | --from D --to D] [--project P] [--activity A] [--out FILE]
 oas project add NAME [--alias A]... [--client C] | list
 oas activity add NAME [--message TEMPLATE] | list
-oas company set NAME [--org-number N] | show
+oas company set NAME [--org-number N] [--contact-name N --contact-phone P --contact-email E] | show   (the AGI file needs the contact)
 oas account list | add NUMBER NAME --kind T|S|K|I
 oas voucher propose --date D --description TEXT [--counterparty C] --debit ACCOUNT=AMOUNT ... --credit ACCOUNT=AMOUNT ...
 oas voucher drafts | list [--from D] [--to D] | show ID | approve ID | reject ID | correct ID
@@ -50,7 +50,22 @@ oas bank import FILE.csv | list [--status new|booked|ignored] | match | ignore I
 oas bank book ID [--description T] --debit ACCOUNT=AMOUNT ... --credit ACCOUNT=AMOUNT ... [--doc ID]...
 oas match list [--status pending|confirmed|declined] | confirm ID | decline ID
 oas vat report [--quarter 2026-Q3] | config | verify-box BOX [--unverify] | map-account ACCOUNT --box BOX
+oas employee add NAME --identity YYYYMMDDNNNC | list | deactivate ID
+oas payroll run --period 2026-10 --pay-date 2026-10-25 --line EMPLOYEE_ID=GROSS[:TAX] ...   (admin; TAX in SEK, or GROSS:30% for a percentage)
+oas payroll list | show ID | approve ID | delete ID | agi ID [--out FILE] | rates | set-rate KEY VALUE | verify-rate KEY [--unverify]
 oas agent-readme
+
+## Payroll
+- Payroll is admin only; agents see masked identity numbers. Employees need a valid personnummer.
+- Preliminary tax is whatever you pass per line (take it from Skatteverket's tax table for the
+  employee's table and column, or give a percentage). The tables are not built in.
+- Only cash salary is supported: no taxable benefits, absence, holiday pay or corrections.
+- Every contribution rate starts UNVERIFIED. `ready_for_agi` stays false until the owner has
+  checked each rate against Skatteverket and run `oas payroll verify-rate`. Do not tell the owner
+  the AGI file is ready while it is false. The XML structure itself is also unverified until it
+  passes Skatteverket's AGI test service.
+- `oas payroll approve` locks the run and proposes a ledger draft (7210, 7510, 2710, 2731, 1930);
+  a human still approves that draft.
 
 ## VAT
 - Give each ledger line a VAT code where it applies, with --debit ACCOUNT=AMOUNT@CODE (for
@@ -159,6 +174,16 @@ enum Cmd {
         #[command(subcommand)]
         action: ExportCmd,
     },
+    /// Employees
+    Employee {
+        #[command(subcommand)]
+        action: EmployeeCmd,
+    },
+    /// Monthly payroll and the AGI file
+    Payroll {
+        #[command(subcommand)]
+        action: PayrollCmd,
+    },
     /// VAT return preparation
     Vat {
         #[command(subcommand)]
@@ -181,6 +206,49 @@ enum Cmd {
     },
     /// Operating manual for agents
     AgentReadme,
+}
+
+#[derive(Subcommand)]
+enum EmployeeCmd {
+    Add {
+        name: String,
+        /// Personnummer or samordningsnummer, 12 digits
+        #[arg(long)]
+        identity: String,
+    },
+    List,
+    Deactivate { id: i64 },
+}
+
+#[derive(Subcommand)]
+enum PayrollCmd {
+    /// Create a monthly pay run (admin only)
+    Run {
+        #[arg(long)]
+        period: String,
+        #[arg(long)]
+        pay_date: String,
+        /// EMPLOYEE_ID=GROSS[:TAX], TAX in SEK or as a percentage like 30%; repeatable
+        #[arg(long = "line")]
+        lines: Vec<String>,
+    },
+    List,
+    Show { id: i64 },
+    Approve { id: i64 },
+    Delete { id: i64 },
+    /// Write the AGI XML for an approved run
+    Agi {
+        id: i64,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    Rates,
+    SetRate { key: String, value: String },
+    VerifyRate {
+        key: String,
+        #[arg(long)]
+        unverify: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -295,6 +363,13 @@ enum CompanyCmd {
         name: String,
         #[arg(long)]
         org_number: Option<String>,
+        /// Technical contact named in the AGI file
+        #[arg(long)]
+        contact_name: Option<String>,
+        #[arg(long)]
+        contact_phone: Option<String>,
+        #[arg(long)]
+        contact_email: Option<String>,
     },
     Show,
 }
@@ -935,8 +1010,9 @@ fn run(cli: Cli) -> Result<(), Failure> {
         Cmd::Company { action } => {
             let cfg = load_config()?;
             match action {
-                CompanyCmd::Set { name, org_number } => {
-                    let body = json!({"name": name, "org_number": org_number});
+                CompanyCmd::Set { name, org_number, contact_name, contact_phone, contact_email } => {
+                    let body = json!({"name": name, "org_number": org_number, "contact_name": contact_name,
+                        "contact_phone": contact_phone, "contact_email": contact_email});
                     print_value(&call(&cfg, "POST", "/company", Some(&body))?, json_out);
                 }
                 CompanyCmd::Show => print_value(&call(&cfg, "GET", "/company", None)?, json_out),
@@ -1041,6 +1117,86 @@ fn run(cli: Cli) -> Result<(), Failure> {
                 }
                 None => {
                     std::io::stdout().write_all(&bytes).map_err(|e| Failure::new("internal", e.to_string()))?;
+                }
+            }
+            Ok(())
+        }
+        Cmd::Employee { action } => {
+            let cfg = load_config()?;
+            match action {
+                EmployeeCmd::Add { name, identity } => {
+                    let body = json!({"name": name, "identity": identity});
+                    print_value(&call(&cfg, "POST", "/employees", Some(&body))?, json_out);
+                }
+                EmployeeCmd::List => print_value(&call(&cfg, "GET", "/employees", None)?, json_out),
+                EmployeeCmd::Deactivate { id } => {
+                    print_value(&call(&cfg, "POST", &format!("/employees/{id}/deactivate"), None)?, json_out)
+                }
+            }
+            Ok(())
+        }
+        Cmd::Payroll { action } => {
+            let cfg = load_config()?;
+            match action {
+                PayrollCmd::Run { period, pay_date, lines } => {
+                    let mut out = vec![];
+                    for item in &lines {
+                        let (emp, rest) = item.split_once('=').ok_or_else(|| {
+                            Failure::new("invalid_input", format!("expected EMPLOYEE_ID=GROSS[:TAX], got '{item}'"))
+                        })?;
+                        let employee_id: i64 = emp.trim().parse().map_err(|_| {
+                            Failure::new("invalid_input", format!("invalid employee id '{emp}'"))
+                        })?;
+                        let (gross, tax) = match rest.split_once(':') {
+                            Some((g, t)) => (g.trim(), Some(t.trim())),
+                            None => (rest.trim(), None),
+                        };
+                        let mut line = json!({"employee_id": employee_id, "gross": gross});
+                        match tax {
+                            Some(t) if t.ends_with('%') => {
+                                let p: f64 = t.trim_end_matches('%').parse().map_err(|_| {
+                                    Failure::new("invalid_input", format!("invalid tax percentage '{t}'"))
+                                })?;
+                                line["tax_percent"] = json!(p);
+                            }
+                            Some(t) => line["tax"] = json!(t),
+                            None => {}
+                        }
+                        out.push(line);
+                    }
+                    let body = json!({"period": period, "pay_date": pay_date, "lines": out});
+                    print_value(&call(&cfg, "POST", "/payroll/runs", Some(&body))?, json_out);
+                }
+                PayrollCmd::List => print_value(&call(&cfg, "GET", "/payroll/runs", None)?, json_out),
+                PayrollCmd::Show { id } => print_value(&call(&cfg, "GET", &format!("/payroll/runs/{id}"), None)?, json_out),
+                PayrollCmd::Approve { id } => {
+                    print_value(&call(&cfg, "POST", &format!("/payroll/runs/{id}/approve"), None)?, json_out)
+                }
+                PayrollCmd::Delete { id } => {
+                    print_value(&call(&cfg, "POST", &format!("/payroll/runs/{id}/delete"), None)?, json_out)
+                }
+                PayrollCmd::Agi { id, out } => {
+                    let (status, bytes) = request_bytes(&cfg, &format!("/payroll/runs/{id}/agi.xml"))?;
+                    if !(200..300).contains(&status) {
+                        return Err(failure_from(&String::from_utf8_lossy(&bytes)));
+                    }
+                    match out {
+                        Some(path) => {
+                            std::fs::write(&path, &bytes).map_err(|e| Failure::new("internal", e.to_string()))?;
+                            print_value(&json!({"status": "ok", "file": path.display().to_string(), "bytes": bytes.len(),
+                                "warning": "UNVERIFIED structure: validate with Skatteverket's AGI test service before use"}), json_out);
+                        }
+                        None => std::io::stdout().write_all(&bytes).map_err(|e| Failure::new("internal", e.to_string()))?,
+                    }
+                }
+                PayrollCmd::Rates => print_value(&call(&cfg, "GET", "/payroll/rates", None)?, json_out),
+                PayrollCmd::SetRate { key, value } => {
+                    let body = json!({"value": value});
+                    print_value(&call(&cfg, "POST", &format!("/payroll/rates/{}", encode(&key)), Some(&body))?, json_out);
+                }
+                PayrollCmd::VerifyRate { key, unverify } => {
+                    let body = json!({"verified": !unverify});
+                    print_value(&call(&cfg, "POST", &format!("/payroll/rates/{}/verify", encode(&key)), Some(&body))?, json_out);
                 }
             }
             Ok(())

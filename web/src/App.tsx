@@ -4,7 +4,7 @@ import {
   SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger, Toaster,
 } from "@spacecorps/components/ui";
 import { ThemeProvider, useTheme } from "@spacecorps/components/theme";
-import { BookOpen, Clock, Inbox, Landmark, LayoutDashboard, LogOut, Moon, Percent, Settings, Sun } from "lucide-react";
+import { BookOpen, Clock, Inbox, Landmark, LayoutDashboard, LogOut, Moon, Percent, Settings, Sun, Users } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { ApiError, api, getToken, setToken, type Me } from "./api";
 import { useHashPath } from "./hooks";
@@ -13,6 +13,7 @@ import { BankPage } from "./pages/Bank";
 import { Dashboard } from "./pages/Dashboard";
 import { InboxPage } from "./pages/Inbox";
 import { Ledger } from "./pages/Ledger";
+import { PayrollPage } from "./pages/Payroll";
 import { SettingsPage } from "./pages/Settings";
 import { VatPage } from "./pages/Vat";
 import { TimePage } from "./pages/Time";
@@ -24,6 +25,7 @@ const NAV = [
   { path: "/bank", label: "Bank", icon: Landmark },
   { path: "/ledger", label: "Ledger", icon: BookOpen },
   { path: "/vat", label: "VAT", icon: Percent },
+  { path: "/payroll", label: "Payroll", icon: Users },
   { path: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -134,6 +136,7 @@ function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
           {current.path === "/bank" && <BankPage me={me} />}
           {current.path === "/ledger" && <Ledger me={me} />}
           {current.path === "/vat" && <VatPage me={me} />}
+          {current.path === "/payroll" && <PayrollPage me={me} />}
           {current.path === "/settings" && <SettingsPage me={me} />}
         </main>
       </SidebarInset>

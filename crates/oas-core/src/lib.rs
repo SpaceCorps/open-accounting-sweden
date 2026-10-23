@@ -414,6 +414,83 @@ pub fn score_match(
     Some(MatchScores { total, name, amount, date, currency })
 }
 
+// ---------------------------------------------------------------------------------------------
+// Payroll: identity numbers and employer contributions
+// ---------------------------------------------------------------------------------------------
+
+/// Validate a 12-digit Swedish personnummer or samordningsnummer (YYYYMMDDNNNC, hyphen optional)
+/// with the Luhn check on the last ten digits. Returns the 12 digits and the birth year.
+pub fn parse_personnummer(input: &str) -> Result<(String, i32), String> {
+    let digits: String = input.chars().filter(|c| !matches!(c, '-' | ' ' | '+')).collect();
+    if digits.len() != 12 || !digits.chars().all(|c| c.is_ascii_digit()) {
+        return Err("identity must be 12 digits: YYYYMMDDNNNC".into());
+    }
+    let year: i32 = digits[..4].parse().map_err(|_| "invalid year".to_string())?;
+    let month: u32 = digits[4..6].parse().map_err(|_| "invalid month".to_string())?;
+    let mut day: u32 = digits[6..8].parse().map_err(|_| "invalid day".to_string())?;
+    if day > 60 {
+        day -= 60; // samordningsnummer
+    }
+    if !(1900..=2100).contains(&year) || NaiveDate::from_ymd_opt(year, month, day).is_none() {
+        return Err("identity does not contain a valid birth date".into());
+    }
+    let sum: u32 = digits[2..]
+        .chars()
+        .enumerate()
+        .map(|(i, c)| {
+            let d = c.to_digit(10).unwrap();
+            let v = if i % 2 == 0 { d * 2 } else { d };
+            if v > 9 { v - 9 } else { v }
+        })
+        .sum();
+    if sum % 10 != 0 {
+        return Err("identity fails the check digit test".into());
+    }
+    Ok((digits, year))
+}
+
+/// Employer contribution rates in percent. Every value is unverified until the owner checks it.
+#[derive(Debug, Clone)]
+pub struct ContribRates {
+    pub standard: f64,
+    pub senior: f64,
+    pub over79: f64,
+    pub youth: f64,
+    /// Monthly pay in öre up to which the youth rate applies.
+    pub youth_cap: i64,
+    pub youth_from_birth: i32,
+    pub youth_to_birth: i32,
+    /// First and last period (YYYY-MM) of the youth reduction.
+    pub youth_start: String,
+    pub youth_end: String,
+}
+
+/// Employer contribution in öre for one employee and month, rounded to whole kronor, plus a
+/// plain-language note on which rate applied. Benefit and special cases are not covered.
+pub fn employer_contribution(base: i64, birth_year: i32, period: &str, r: &ContribRates) -> (i64, String) {
+    if base <= 0 {
+        return (0, "no pay".into());
+    }
+    let whole_kr = |ore: f64| ((ore / 100.0).round() * 100.0) as i64;
+    if birth_year >= 1959 {
+        let youth = birth_year >= r.youth_from_birth
+            && birth_year <= r.youth_to_birth
+            && period >= r.youth_start.as_str()
+            && period <= r.youth_end.as_str();
+        if youth {
+            let low = base.min(r.youth_cap);
+            let high = base - low;
+            let c = low as f64 * r.youth / 100.0 + high as f64 * r.standard / 100.0;
+            return (whole_kr(c), format!("youth rate {}% up to the monthly cap, {}% above", r.youth, r.standard));
+        }
+        (whole_kr(base as f64 * r.standard / 100.0), format!("standard rate {}%", r.standard))
+    } else if birth_year >= 1938 {
+        (whole_kr(base as f64 * r.senior / 100.0), format!("reduced rate {}% (born 1938-1958)", r.senior))
+    } else {
+        (whole_kr(base as f64 * r.over79 / 100.0), format!("rate {}% (born 1937 or earlier)", r.over79))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -551,5 +628,48 @@ mod tests {
         assert!(name_score("GitHub", "GITHUB INC SAN FRANCISCO") > 0.9);
         assert_eq!(name_score("", "anything"), 0.0);
         assert_eq!(name_score("Telia", "Spotify"), 0.0);
+    }
+
+    #[test]
+    fn personnummer_luhn() {
+        // 19900101-0017 is a commonly used valid test number: check digit logic only.
+        let (d, y) = parse_personnummer("199001010017").unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(d.len(), 12);
+        assert_eq!(y, 1990);
+        assert!(parse_personnummer("199001010018").is_err());
+        assert!(parse_personnummer("19900101").is_err());
+        assert!(parse_personnummer("199013010017").is_err());
+    }
+
+    fn rates() -> ContribRates {
+        ContribRates {
+            standard: 31.42, senior: 10.21, over79: 0.0, youth: 20.81, youth_cap: 2_500_000,
+            youth_from_birth: 2003, youth_to_birth: 2007,
+            youth_start: "2026-04".into(), youth_end: "2027-09".into(),
+        }
+    }
+
+    #[test]
+    fn contributions_by_age_class() {
+        let r = rates();
+        // 50 000 kr in a month, born 1985: 31.42% = 15 710 kr
+        assert_eq!(employer_contribution(5_000_000, 1985, "2026-10", &r).0, 1_571_000);
+        // born 1950: 10.21% of 50 000 = 5 105 kr
+        assert_eq!(employer_contribution(5_000_000, 1950, "2026-10", &r).0, 510_500);
+        // born 1930: nothing
+        assert_eq!(employer_contribution(5_000_000, 1930, "2026-10", &r).0, 0);
+        assert_eq!(employer_contribution(0, 1985, "2026-10", &r).0, 0);
+    }
+
+    #[test]
+    fn youth_reduction_applies_only_inside_its_window() {
+        let r = rates();
+        // 30 000 kr, born 2004, October 2026: 25 000 at 20.81% + 5 000 at 31.42% = 5 202.5 + 1 571 = 6 773.5 -> 6 774 (rounded to whole kronor)
+        let (c, note) = employer_contribution(3_000_000, 2004, "2026-10", &r);
+        assert_eq!(c, 677_400, "{note}");
+        // before the window starts the standard rate applies: 30 000 * 31.42% = 9 426
+        assert_eq!(employer_contribution(3_000_000, 2004, "2026-03", &r).0, 942_600);
+        // outside the birth years
+        assert_eq!(employer_contribution(3_000_000, 1990, "2026-10", &r).0, 942_600);
     }
 }

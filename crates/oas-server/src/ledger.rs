@@ -25,7 +25,10 @@ pub const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS company(
   id INTEGER PRIMARY KEY CHECK (id = 1),
   name TEXT NOT NULL,
-  org_number TEXT NOT NULL DEFAULT ''
+  org_number TEXT NOT NULL DEFAULT '',
+  contact_name TEXT NOT NULL DEFAULT '',
+  contact_phone TEXT NOT NULL DEFAULT '',
+  contact_email TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS account(
   number INTEGER PRIMARY KEY,
@@ -169,14 +172,21 @@ pub(crate) type Ln = (i64, i64, i64, Option<String>);
 
 /// Add the VAT code column to databases created before VAT codes existed.
 pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
-    for t in ["draft_line", "entry"] {
+    for (t, col) in [
+        ("draft_line", "vat_code"),
+        ("entry", "vat_code"),
+        ("company", "contact_name"),
+        ("company", "contact_phone"),
+        ("company", "contact_email"),
+    ] {
         let has: i64 = conn.query_row(
-            &format!("SELECT COUNT(*) FROM pragma_table_info('{t}') WHERE name = 'vat_code'"),
+            &format!("SELECT COUNT(*) FROM pragma_table_info('{t}') WHERE name = '{col}'"),
             [],
             |r| r.get(0),
         )?;
         if has == 0 {
-            conn.execute_batch(&format!("ALTER TABLE {t} ADD COLUMN vat_code TEXT"))?;
+            let decl = if col == "vat_code" { "TEXT" } else { "TEXT NOT NULL DEFAULT ''" };
+            conn.execute_batch(&format!("ALTER TABLE {t} ADD COLUMN {col} {decl}"))?;
         }
     }
     Ok(())
@@ -455,14 +465,25 @@ pub async fn add_account(
 pub struct CompanyIn {
     name: String,
     org_number: Option<String>,
+    contact_name: Option<String>,
+    contact_phone: Option<String>,
+    contact_email: Option<String>,
 }
 
 pub async fn get_company(State(st): State<Shared>) -> ApiResult {
     let conn = st.conn.lock().unwrap();
-    let c: Option<(String, String)> = conn
-        .query_row("SELECT name, org_number FROM company WHERE id = 1", [], |r| Ok((r.get(0)?, r.get(1)?)))
+    let c: Option<Value> = conn
+        .query_row(
+            "SELECT name, org_number, contact_name, contact_phone, contact_email FROM company WHERE id = 1",
+            [],
+            |r| {
+                Ok(json!({"name": r.get::<_, String>(0)?, "org_number": r.get::<_, String>(1)?,
+                          "contact_name": r.get::<_, String>(2)?, "contact_phone": r.get::<_, String>(3)?,
+                          "contact_email": r.get::<_, String>(4)?}))
+            },
+        )
         .ok();
-    Ok(Json(json!({"company": c.map(|(n, o)| json!({"name": n, "org_number": o}))})))
+    Ok(Json(json!({"company": c})))
 }
 
 pub async fn set_company(
@@ -473,17 +494,22 @@ pub async fn set_company(
     require_admin(actor.role)?;
     let name = clean_text(&b.name, "name", 100)?;
     let org = clean_text(b.org_number.as_deref().unwrap_or(""), "org_number", 20)?;
+    let cname = clean_text(b.contact_name.as_deref().unwrap_or(""), "contact_name", 50)?;
+    let phone = clean_text(b.contact_phone.as_deref().unwrap_or(""), "contact_phone", 20)?;
+    let email = clean_text(b.contact_email.as_deref().unwrap_or(""), "contact_email", 100)?;
     if name.is_empty() {
         return Err(ApiError::invalid("company name is empty"));
     }
     let conn = st.conn.lock().unwrap();
     conn.execute(
-        "INSERT INTO company(id, name, org_number) VALUES (1, ?1, ?2)
-         ON CONFLICT(id) DO UPDATE SET name = excluded.name, org_number = excluded.org_number",
-        params![name, org],
+        "INSERT INTO company(id, name, org_number, contact_name, contact_phone, contact_email) VALUES (1, ?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(id) DO UPDATE SET name = excluded.name, org_number = excluded.org_number,
+           contact_name = excluded.contact_name, contact_phone = excluded.contact_phone, contact_email = excluded.contact_email",
+        params![name, org, cname, phone, email],
     )?;
     audit(&conn, &actor, "company.set", "1", &name)?;
-    Ok(Json(json!({"company": {"name": name, "org_number": org}})))
+    Ok(Json(json!({"company": {"name": name, "org_number": org, "contact_name": cname,
+                               "contact_phone": phone, "contact_email": email}})))
 }
 
 #[derive(Deserialize)]

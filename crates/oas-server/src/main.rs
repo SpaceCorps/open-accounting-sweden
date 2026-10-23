@@ -24,6 +24,7 @@ use subtle::ConstantTimeEq;
 mod auth;
 mod inbox;
 mod ledger;
+mod payroll;
 mod vat;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -132,9 +133,11 @@ fn open_db(path: &str) -> Result<Connection, rusqlite::Error> {
     conn.execute_batch(auth::SCHEMA)?;
     conn.execute_batch(inbox::SCHEMA)?;
     conn.execute_batch(vat::SCHEMA)?;
+    conn.execute_batch(payroll::SCHEMA)?;
     ledger::migrate(&conn)?;
     ledger::seed(&conn)?;
     vat::seed(&conn)?;
+    payroll::seed(&conn)?;
     for (name, message) in [
         ("meeting", "Meeting: {topic}"),
         ("building", "Building: {topic}"),
@@ -721,6 +724,16 @@ async fn main() {
         .route("/vat/report", get(vat::report))
         .route("/vat/boxes/{box}/verify", post(vat::verify_box))
         .route("/vat/accounts", post(vat::map_account))
+        .route("/employees", get(payroll::list_employees).post(payroll::add_employee))
+        .route("/employees/{id}/deactivate", post(payroll::deactivate_employee))
+        .route("/payroll/rates", get(payroll::list_rates))
+        .route("/payroll/rates/{key}", post(payroll::set_rate))
+        .route("/payroll/rates/{key}/verify", post(payroll::verify_rate))
+        .route("/payroll/runs", get(payroll::list_runs).post(payroll::create_run))
+        .route("/payroll/runs/{id}", get(payroll::get_run))
+        .route("/payroll/runs/{id}/delete", post(payroll::delete_run))
+        .route("/payroll/runs/{id}/approve", post(payroll::approve_run))
+        .route("/payroll/runs/{id}/agi.xml", get(payroll::agi_xml))
         .route("/matches", get(inbox::list_matches))
         .route("/matches/{id}/confirm", post(inbox::confirm_match))
         .route("/matches/{id}/decline", post(inbox::decline_match))
