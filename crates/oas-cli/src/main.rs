@@ -33,6 +33,7 @@ oas token create NAME [--save] | list | revoke ID
 oas time log --activity A [--project P] --date YYYY-MM-DD --from HH:MM --to HH:MM [--message M] [--create-project]
 oas time start --activity A [--project P] [--message M] [--create-project]
 oas time stop
+oas time edit ID --message TEXT   (changes only the message of a logged entry)
 oas time list [--from D] [--to D] [--project P] [--activity A]
 oas time report [--week | --month | --from D --to D] [--project P] [--activity A]
 oas time export [--week | --month | --from D --to D] [--project P] [--activity A] [--out FILE]
@@ -652,6 +653,12 @@ enum TimeCmd {
         create_project: bool,
     },
     Stop,
+    /// Change the message of a logged entry
+    Edit {
+        id: i64,
+        #[arg(long)]
+        message: String,
+    },
     List(Range),
     Report(Range),
     Export {
@@ -1119,6 +1126,10 @@ fn run(cli: Cli) -> Result<(), Failure> {
                     print_value(&post_with_project(&cfg, "/time/start", body)?, json_out);
                 }
                 TimeCmd::Stop => print_value(&call(&cfg, "POST", "/time/stop", None)?, json_out),
+                TimeCmd::Edit { id, message } => {
+                    let body = json!({"message": message});
+                    print_value(&call(&cfg, "POST", &format!("/time/{id}/message"), Some(&body))?, json_out);
+                }
                 TimeCmd::List(r) => {
                     let (f, t) = resolve_range(&r);
                     let q = query_string(&r, &f, &t);

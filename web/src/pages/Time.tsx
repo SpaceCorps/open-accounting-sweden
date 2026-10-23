@@ -3,7 +3,7 @@ import {
   DialogTitle, Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Tabs,
   TabsContent, TabsList, TabsTrigger, type DataTableColumn,
 } from "@spacecorps/components/ui";
-import { Banknote, Download, Play, Plus, Square } from "lucide-react";
+import { Banknote, Download, Pencil, Play, Plus, Square } from "lucide-react";
 import { useState } from "react";
 import { ApiError, api, download, type Activity, type Me, type Project, type Report, type TimeEntry } from "../api";
 import { monthStart, today, useData } from "../hooks";
@@ -229,6 +229,37 @@ function RateDialog({ project, onClose, onDone }: { project: Project | null; onC
   );
 }
 
+function EditMessageDialog({ entry, onClose, onDone }: { entry: TimeEntry | null; onClose: () => void; onDone: () => void }) {
+  const [message, setMessage] = useState("");
+  const [loaded, setLoaded] = useState<number | null>(null);
+  if (entry && loaded !== entry.id) {
+    setLoaded(entry.id);
+    setMessage(entry.message);
+  }
+  async function save() {
+    if (!entry) return;
+    try {
+      await api(`/time/${entry.id}/message`, { method: "POST", body: { message } });
+      notifyOk("Message saved");
+      onClose();
+      onDone();
+    } catch (e) {
+      notifyError(e);
+    }
+  }
+  return (
+    <Dialog open={entry !== null} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Edit message</DialogTitle><DialogDescription>{entry ? `${entry.date} ${entry.start}-${entry.end ?? "running"}, ${entry.project}, ${entry.activity}. Only the message changes.` : ""}</DialogDescription></DialogHeader>
+        <DialogBody>
+          <div className="oas-form"><TextField label="Message" value={message} onChange={setMessage} /></div>
+        </DialogBody>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={() => void save()}>Save</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function NewActivityDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenChange: (o: boolean) => void; onDone: () => void }) {
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
@@ -267,6 +298,7 @@ export function TimePage({ me }: { me: Me }) {
   const [dialog, setDialog] = useState<"log" | "timer" | null>(null);
   const [newProject, setNewProject] = useState(false);
   const [pricing, setPricing] = useState<Project | null>(null);
+  const [editing, setEditing] = useState<TimeEntry | null>(null);
   const [newActivity, setNewActivity] = useState(false);
 
   const qs = new URLSearchParams({ from, to });
@@ -384,6 +416,8 @@ export function TimePage({ me }: { me: Me }) {
                 rows={(entries.data?.entries ?? []).slice().reverse()}
                 getRowId={(e) => String(e.id)}
                 defaultPageSize={15}
+                rowActions={[{ tag: "edit", label: "Edit message", icon: <Pencil aria-hidden="true" />, tooltip: "Edit message" }]}
+                onRowAction={({ row }) => setEditing(row)}
                 caption="Time entries"
               />
             )}
@@ -419,6 +453,7 @@ export function TimePage({ me }: { me: Me }) {
         onDone={reloadAll}
       />
       <NewProjectDialog open={newProject} onOpenChange={setNewProject} onDone={reloadAll} canSetRate={me.can_approve} />
+      <EditMessageDialog entry={editing} onClose={() => setEditing(null)} onDone={reloadAll} />
       <RateDialog project={pricing} onClose={() => setPricing(null)} onDone={reloadAll} />
       <NewActivityDialog open={newActivity} onOpenChange={setNewActivity} onDone={reloadAll} />
     </>

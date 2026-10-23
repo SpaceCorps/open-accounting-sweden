@@ -678,6 +678,29 @@ async fn stop_timer(State(st): State<Shared>) -> ApiResult {
     Ok(Json(json!({"entry": entry})))
 }
 
+#[derive(Deserialize)]
+struct EditEntry {
+    message: String,
+}
+
+/// Change the message of a time entry. Times, project and activity stay as logged.
+async fn edit_entry(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    Json(b): Json<EditEntry>,
+) -> ApiResult {
+    let message = clean(&b.message, "message", 500)?;
+    let conn = st.conn.lock().unwrap();
+    let n = conn.execute("UPDATE time_entry SET message = ?1 WHERE id = ?2", params![message, id])?;
+    if n == 0 {
+        return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such time entry"));
+    }
+    ledger::audit(&conn, &actor, "time.message", &id.to_string(), &message)?;
+    let entry = load_entries(&conn)?.into_iter().find(|e| e.id == id);
+    Ok(Json(json!({"entry": entry})))
+}
+
 async fn list_time(State(st): State<Shared>, Query(f): Query<Filters>) -> ApiResult {
     let conn = st.conn.lock().unwrap();
     Ok(Json(json!({"entries": filtered(&conn, &f)?})))
@@ -812,6 +835,7 @@ async fn main() {
         .route("/projects/{id}/rate", post(set_project_rate))
         .route("/time", get(list_time).post(log_time))
         .route("/time/start", post(start_timer))
+        .route("/time/{id}/message", post(edit_entry))
         .route("/time/stop", post(stop_timer))
         .route("/time/report", get(report))
         .route("/time/export.csv", get(export_csv))
