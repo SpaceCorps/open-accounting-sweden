@@ -45,6 +45,14 @@ check "receipts cannot be edited" '! sqlite3 $T/s.db "UPDATE document SET filena
 
 check "an agent cannot add an employee" '! agent employee add Anna --identity 200407204567'
 check "a bad personnummer is rejected" '! admin employee add Bad --identity 198503141234'
+check "a rate can be marked not used and then blocks nobody" 'admin payroll not-used contrib_youth && admin payroll rates | grep -A8 "key: contrib_youth$" | grep -q "not_used: true"'
+YOUNG=$(python3 -c "
+b='20040720456'; d=b[2:]; t=0
+for i,c in enumerate(d):
+    v=int(c)*(2 if i%2==0 else 1); t+= v-9 if v>9 else v
+print(b+str((10-t%10)%10))")
+admin employee add "Young Person" --identity "$YOUNG" >/dev/null
+check "a run needing a not-used rate is refused" 'admin payroll run --period 2026-10 --pay-date 2026-10-25 --line 1=1000:10% 2>&1 | grep -q "marked not used"'
 check "AGI needs an approved run" '! admin payroll agi 1'
 
 echo

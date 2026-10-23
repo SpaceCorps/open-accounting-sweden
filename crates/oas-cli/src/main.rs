@@ -52,7 +52,7 @@ oas match list [--status pending|confirmed|declined] | confirm ID | decline ID
 oas vat report [--quarter 2026-Q3] | config | verify-box BOX [--unverify] | map-account ACCOUNT --box BOX
 oas employee add NAME --identity YYYYMMDDNNNC | list | deactivate ID
 oas payroll run --period 2026-10 --pay-date 2026-10-25 --line EMPLOYEE_ID=GROSS[:TAX] ...   (admin; TAX in SEK, or GROSS:30% for a percentage)
-oas payroll list | show ID | approve ID | delete ID | agi ID [--out FILE] | rates | set-rate KEY VALUE | verify-rate KEY [--unverify]
+oas payroll list | show ID | approve ID | delete ID | agi ID [--out FILE] | rates | set-rate KEY VALUE | verify-rate KEY [--unverify] | not-used KEY [--used]
 oas agent-readme
 
 ## Payroll
@@ -248,6 +248,13 @@ enum PayrollCmd {
         key: String,
         #[arg(long)]
         unverify: bool,
+    },
+    /// Mark a rate as not used by this company (it stops blocking the AGI file)
+    NotUsed {
+        key: String,
+        /// Undo: the rate counts again
+        #[arg(long)]
+        used: bool,
     },
 }
 
@@ -1193,6 +1200,10 @@ fn run(cli: Cli) -> Result<(), Failure> {
                 PayrollCmd::SetRate { key, value } => {
                     let body = json!({"value": value});
                     print_value(&call(&cfg, "POST", &format!("/payroll/rates/{}", encode(&key)), Some(&body))?, json_out);
+                }
+                PayrollCmd::NotUsed { key, used } => {
+                    let body = json!({"not_used": !used});
+                    print_value(&call(&cfg, "POST", &format!("/payroll/rates/{}/unused", encode(&key)), Some(&body))?, json_out);
                 }
                 PayrollCmd::VerifyRate { key, unverify } => {
                     let body = json!({"verified": !unverify});

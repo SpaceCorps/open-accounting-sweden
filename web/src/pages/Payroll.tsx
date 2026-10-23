@@ -3,7 +3,7 @@ import {
   DialogTitle, Input, Tabs, TabsContent, TabsList, TabsTrigger,
   type DataTableColumn, type DataTableRowAction,
 } from "@spacecorps/components/ui";
-import { Check, Download, Eye, Pencil, Plus, ShieldAlert, ShieldCheck, Trash2, UserMinus } from "lucide-react";
+import { Check, Download, Eye, EyeOff, Pencil, Plus, ShieldAlert, ShieldCheck, Trash2, UserMinus } from "lucide-react";
 import { useState } from "react";
 import { api, download, type Me } from "../api";
 import { useData } from "../hooks";
@@ -16,7 +16,7 @@ interface Run {
   totals: { gross: string; tax: string; net: string; contributions: string; to_skattekonto: string };
   agi_due: string | null; agi_due_note: string; unverified_rates: string[]; ready_for_agi: boolean; ledger_draft_id: number | null;
 }
-interface Rate { key: string; label: string; value: string; source: string; verified: boolean; verified_by: string | null }
+interface Rate { key: string; label: string; value: string; source: string; verified: boolean; verified_by: string | null; not_used: boolean }
 
 function AddEmployee({ open, onOpenChange, onDone }: { open: boolean; onOpenChange: (o: boolean) => void; onDone: () => void }) {
   const [name, setName] = useState("");
@@ -164,7 +164,7 @@ export function PayrollPage({ me }: { me: Me }) {
   const [rateValue, setRateValue] = useState("");
 
   const reload = () => { employees.reload(); runs.reload(); rates.reload(); };
-  const unverified = (rates.data?.rates ?? []).filter((r) => !r.verified);
+  const unverified = (rates.data?.rates ?? []).filter((r) => !r.verified && !r.not_used);
 
   async function act(run: Run, what: "approve" | "delete") {
     setConfirm(null);
@@ -186,6 +186,16 @@ export function PayrollPage({ me }: { me: Me }) {
     try {
       await api(`/payroll/rates/${key}/verify`, { method: "POST", body: { verified } });
       notifyOk(verified ? "Rate marked verified" : "Rate marked unverified");
+      reload();
+    } catch (e) {
+      notifyError(e);
+    }
+  }
+
+  async function setNotUsed(key: string, notUsed: boolean) {
+    try {
+      await api(`/payroll/rates/${key}/unused`, { method: "POST", body: { not_used: notUsed } });
+      notifyOk(notUsed ? "Rate marked not used" : "Rate counts again");
       reload();
     } catch (e) {
       notifyError(e);
@@ -248,13 +258,16 @@ export function PayrollPage({ me }: { me: Me }) {
   const rateColumns: DataTableColumn<Rate>[] = [
     { name: "label", header: "Rate or limit" },
     { name: "value", header: "Value", width: "110px" },
-    { name: "verified", header: "Status", accessor: (r) => (r.verified ? "verified" : "UNVERIFIED"), cell: (v) => <Badge variant={v === "verified" ? "success" : "warning"}>{v as string}</Badge> },
+    { name: "verified", header: "Status", accessor: (r) => (r.not_used ? "not used" : r.verified ? "verified" : "UNVERIFIED"), cell: (v) => <Badge variant={v === "verified" ? "success" : v === "not used" ? "secondary" : "warning"}>{v as string}</Badge> },
     { name: "source", header: "Source", wrapText: true },
   ];
   const rateActions = (r: Rate): DataTableRowAction<Rate>[] => [
     r.verified
       ? { tag: "unverify", label: "Mark unverified", icon: <ShieldAlert aria-hidden="true" />, tooltip: "Mark unverified" }
       : { tag: "verify", label: "I checked this", icon: <ShieldCheck aria-hidden="true" />, tooltip: "I checked this against Skatteverket" },
+    r.not_used
+      ? { tag: "used", label: "Counts again", icon: <ShieldCheck aria-hidden="true" />, tooltip: "This rate applies after all" }
+      : { tag: "unused", label: "Not used by us", icon: <EyeOff aria-hidden="true" />, tooltip: "We never use this rate" },
     { tag: "edit", label: "Change value", icon: <Pencil aria-hidden="true" />, tooltip: "Change value" },
   ];
 
@@ -327,6 +340,7 @@ export function PayrollPage({ me }: { me: Me }) {
               rowActions={rateActions}
               onRowAction={({ tag, row }) => {
                 if (tag === "edit") { setEditRate(row); setRateValue(row.value); }
+                else if (tag === "unused" || tag === "used") void setNotUsed(row.key, tag === "unused");
                 else void setVerified(row.key, tag === "verify");
               }}
               paginated={false}

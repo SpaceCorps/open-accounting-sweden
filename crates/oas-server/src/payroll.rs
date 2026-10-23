@@ -85,6 +85,14 @@ const RATES: &[(&str, &str, &str)] = &[
 ];
 
 pub fn seed(conn: &Connection) -> rusqlite::Result<()> {
+    let has: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('payroll_rate') WHERE name = 'not_used'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has == 0 {
+        conn.execute_batch("ALTER TABLE payroll_rate ADD COLUMN not_used INTEGER NOT NULL DEFAULT 0")?;
+    }
     for (k, label, v) in RATES {
         conn.execute(
             "INSERT OR IGNORE INTO payroll_rate(key, label, value, source) VALUES (?1, ?2, ?3, ?4)",
@@ -108,7 +116,7 @@ fn mask(identity: &str) -> String {
 
 fn load_rates(conn: &Connection) -> Result<(ContribRates, Vec<String>), ApiError> {
     let rows: Vec<(String, String, bool)> = conn
-        .prepare("SELECT key, value, verified FROM payroll_rate")?
+        .prepare("SELECT key, value, (verified = 1 OR not_used = 1) FROM payroll_rate")?
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? != 0)))?
         .filter_map(Result::ok)
         .collect();
@@ -133,11 +141,12 @@ fn load_rates(conn: &Connection) -> Result<(ContribRates, Vec<String>), ApiError
 pub async fn list_rates(State(st): State<Shared>) -> ApiResult {
     let conn = st.conn.lock().unwrap();
     let rows: Vec<Value> = conn
-        .prepare("SELECT key, label, value, source, verified, verified_by, verified_at FROM payroll_rate ORDER BY key")?
+        .prepare("SELECT key, label, value, source, verified, verified_by, verified_at, not_used FROM payroll_rate ORDER BY key")?
         .query_map([], |r| {
             Ok(json!({"key": r.get::<_, String>(0)?, "label": r.get::<_, String>(1)?, "value": r.get::<_, String>(2)?,
                       "source": r.get::<_, String>(3)?, "verified": r.get::<_, i64>(4)? != 0,
-                      "verified_by": r.get::<_, Option<String>>(5)?, "verified_at": r.get::<_, Option<String>>(6)?}))
+                      "verified_by": r.get::<_, Option<String>>(5)?, "verified_at": r.get::<_, Option<String>>(6)?,
+                      "not_used": r.get::<_, i64>(7)? != 0}))
         })?
         .filter_map(Result::ok)
         .collect();
@@ -164,7 +173,7 @@ pub async fn set_rate(
     // Apply inside a transaction so a value the calculation cannot read is rolled back.
     let tx = conn.unchecked_transaction()?;
     let n = tx.execute(
-        "UPDATE payroll_rate SET value = ?1, source = 'set by the owner', verified = 0, verified_by = NULL, verified_at = NULL WHERE key = ?2",
+        "UPDATE payroll_rate SET value = ?1, source = 'set by the owner', verified = 0, verified_by = NULL, verified_at = NULL, not_used = 0 WHERE key = ?2",
         params![value, key],
     )?;
     if n == 0 {
@@ -191,7 +200,7 @@ pub async fn verify_rate(
     let conn = st.conn.lock().unwrap();
     let n = if b.verified {
         conn.execute(
-            "UPDATE payroll_rate SET verified = 1, verified_by = ?1, verified_at = ?2 WHERE key = ?3",
+            "UPDATE payroll_rate SET verified = 1, verified_by = ?1, verified_at = ?2, not_used = 0 WHERE key = ?3",
             params![actor.name, utc_string(Utc::now()), key],
         )?
     } else {
@@ -202,6 +211,55 @@ pub async fn verify_rate(
     }
     ledger::audit(&conn, &actor, if b.verified { "payroll.verify" } else { "payroll.unverify" }, &key, "")?;
     Ok(Json(json!({"key": key, "verified": b.verified})))
+}
+
+/// Which rate keys an employee's contribution depends on in a period.
+fn keys_used(birth_year: i32, period: &str, rates: &ContribRates) -> Vec<&'static str> {
+    if birth_year >= 1959 {
+        let youth = birth_year >= rates.youth_from_birth
+            && birth_year <= rates.youth_to_birth
+            && period >= rates.youth_start.as_str()
+            && period <= rates.youth_end.as_str();
+        let mut k = vec!["contrib_standard"];
+        if youth {
+            k.extend(["contrib_youth", "contrib_youth_cap"]);
+        }
+        k
+    } else if birth_year >= 1938 {
+        vec!["contrib_senior"]
+    } else {
+        vec!["contrib_over79"]
+    }
+}
+
+#[derive(Deserialize)]
+pub struct UnusedIn {
+    not_used: bool,
+}
+
+/// Mark a rate as not used by this company, so it no longer blocks the AGI file. A pay run that would
+/// need a rate marked not used is refused until the rate is verified.
+pub async fn set_not_used(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    Path(key): Path<String>,
+    Json(b): Json<UnusedIn>,
+) -> ApiResult {
+    require_admin(&actor)?;
+    let conn = st.conn.lock().unwrap();
+    let n = if b.not_used {
+        conn.execute(
+            "UPDATE payroll_rate SET not_used = 1, verified = 0, verified_by = NULL, verified_at = NULL WHERE key = ?1",
+            params![key],
+        )?
+    } else {
+        conn.execute("UPDATE payroll_rate SET not_used = 0 WHERE key = ?1", params![key])?
+    };
+    if n == 0 {
+        return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such payroll rate"));
+    }
+    ledger::audit(&conn, &actor, if b.not_used { "payroll.not_used" } else { "payroll.used" }, &key, "")?;
+    Ok(Json(json!({"key": key, "not_used": b.not_used})))
 }
 
 #[derive(Deserialize)]
@@ -329,6 +387,24 @@ pub async fn create_run(
         };
         if tax > gross {
             return Err(ApiError::invalid("tax cannot exceed gross pay"));
+        }
+        let needed = keys_used(birth_year, &b.period, &rates);
+        let blocked: Vec<String> = {
+            let mut out = vec![];
+            for k in needed {
+                let nu: i64 = tx.query_row("SELECT not_used FROM payroll_rate WHERE key = ?1", params![k], |r| r.get(0)).unwrap_or(0);
+                if nu == 1 {
+                    out.push(k.to_string());
+                }
+            }
+            out
+        };
+        if !blocked.is_empty() {
+            return Err(ApiError::invalid(format!(
+                "employee {} needs the rate {} which is marked not used; verify it first",
+                l.employee_id,
+                blocked.join(", ")
+            )));
         }
         let (contribution, note) = employer_contribution(gross, birth_year, &b.period, &rates);
         tx.execute(

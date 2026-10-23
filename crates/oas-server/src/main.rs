@@ -729,6 +729,7 @@ async fn main() {
         .route("/payroll/rates", get(payroll::list_rates))
         .route("/payroll/rates/{key}", post(payroll::set_rate))
         .route("/payroll/rates/{key}/verify", post(payroll::verify_rate))
+        .route("/payroll/rates/{key}/unused", post(payroll::set_not_used))
         .route("/payroll/runs", get(payroll::list_runs).post(payroll::create_run))
         .route("/payroll/runs/{id}", get(payroll::get_run))
         .route("/payroll/runs/{id}/delete", post(payroll::delete_run))
