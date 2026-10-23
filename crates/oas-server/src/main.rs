@@ -23,6 +23,7 @@ use subtle::ConstantTimeEq;
 
 mod auth;
 mod inbox;
+mod invoices;
 mod ledger;
 mod payroll;
 mod vat;
@@ -151,6 +152,7 @@ fn open_db(path: &str) -> Result<Connection, rusqlite::Error> {
     conn.execute_batch(inbox::SCHEMA)?;
     conn.execute_batch(vat::SCHEMA)?;
     conn.execute_batch(payroll::SCHEMA)?;
+    conn.execute_batch(invoices::SCHEMA)?;
     ledger::migrate(&conn)?;
     ledger::seed(&conn)?;
     vat::seed(&conn)?;
@@ -401,14 +403,14 @@ fn load_entries(conn: &Connection) -> Result<Vec<TimeEntry>, ApiError> {
 }
 
 #[derive(Deserialize, Default)]
-struct Filters {
-    from: Option<String>,
-    to: Option<String>,
-    project: Option<String>,
-    activity: Option<String>,
+pub(crate) struct Filters {
+    pub(crate) from: Option<String>,
+    pub(crate) to: Option<String>,
+    pub(crate) project: Option<String>,
+    pub(crate) activity: Option<String>,
 }
 
-fn filtered(conn: &Connection, f: &Filters) -> Result<Vec<TimeEntry>, ApiError> {
+pub(crate) fn filtered(conn: &Connection, f: &Filters) -> Result<Vec<TimeEntry>, ApiError> {
     let project_name = match f.project.as_deref().filter(|p| !p.trim().is_empty()) {
         Some(p) => {
             let projects = load_projects(conn)?;
@@ -855,6 +857,13 @@ async fn main() {
         .route("/payroll/runs/{id}/delete", post(payroll::delete_run))
         .route("/payroll/runs/{id}/approve", post(payroll::approve_run))
         .route("/payroll/runs/{id}/agi.xml", get(payroll::agi_xml))
+        .route("/customers", get(invoices::list_customers).post(invoices::add_customer))
+        .route("/invoices", get(invoices::list_invoices).post(invoices::create_invoice))
+        .route("/invoices/from-time", post(invoices::from_time))
+        .route("/invoices/{id}", get(invoices::get_invoice))
+        .route("/invoices/{id}/issue", post(invoices::issue_invoice))
+        .route("/invoices/{id}/delete", post(invoices::delete_invoice))
+        .route("/invoices/{id}/html", get(invoices::invoice_html))
         .route("/matches", get(inbox::list_matches))
         .route("/matches/{id}/confirm", post(inbox::confirm_match))
         .route("/matches/{id}/decline", post(inbox::decline_match))

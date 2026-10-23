@@ -1,6 +1,6 @@
 import { AppShell, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Toaster } from "@spacecorps/components/ui";
 import { ThemeProvider, useTheme } from "@spacecorps/components/theme";
-import { BookOpen, Clock, Inbox, Landmark, LayoutDashboard, LogOut, Moon, Percent, Settings, Sun, Users } from "lucide-react";
+import { BookOpen, Clock, Inbox, Landmark, FileText, LayoutDashboard, LogOut, Moon, Percent, Settings, Sun, Users } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { ApiError, api, getToken, setToken, type Me } from "./api";
 import { useHashPath } from "./hooks";
@@ -8,6 +8,7 @@ import { ErrorNote, TextField } from "./kit";
 import { BankPage } from "./pages/Bank";
 import { Dashboard } from "./pages/Dashboard";
 import { InboxPage } from "./pages/Inbox";
+import { InvoicesPage } from "./pages/Invoices";
 import { Ledger } from "./pages/Ledger";
 import { PayrollPage } from "./pages/Payroll";
 import { SettingsPage } from "./pages/Settings";
@@ -17,6 +18,7 @@ import { TimePage } from "./pages/Time";
 const NAV = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
   { path: "/time", label: "Time", icon: Clock },
+  { path: "/invoices", label: "Invoices", icon: FileText },
   { path: "/inbox", label: "Inbox", icon: Inbox },
   { path: "/bank", label: "Bank", icon: Landmark },
   { path: "/ledger", label: "Ledger", icon: BookOpen },
@@ -119,6 +121,7 @@ function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
       <main className="oas-main">
         {current.path === "/" && <Dashboard me={me} />}
         {current.path === "/time" && <TimePage me={me} />}
+        {current.path === "/invoices" && <InvoicesPage me={me} />}
         {current.path === "/inbox" && <InboxPage />}
         {current.path === "/bank" && <BankPage me={me} />}
         {current.path === "/ledger" && <Ledger me={me} />}

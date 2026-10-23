@@ -137,3 +137,22 @@ export function importBankCsv(file: File) {
     "/bank/import", "text/csv", file,
   );
 }
+
+export interface Customer { id: number; name: string; org_number: string; vat_number: string; address: string; country: string; email: string }
+export interface InvoiceLine { description: string; quantity: string; unit: string; unit_price: string; net: string }
+export interface Invoice {
+  id: number; label: string | null; number: number | null; status: "draft" | "issued"; customer: Customer;
+  issue_date: string; due_date: string; service_date: string | null; currency: string; vat_rate: number;
+  notes: string; lines: InvoiceLine[]; totals: { net: string; vat: string; gross: string };
+  ledger_draft_id: number | null; time_entries: number;
+}
+
+/** Fetch the printable invoice with the session token and open it in a new tab. */
+export async function openInvoicePage(id: number) {
+  const res = await fetch(`/api/invoices/${id}/html`, { headers: { Authorization: `Bearer ${getToken()}` } });
+  if (!res.ok) throw new ApiError(res.status, "error", "could not load the invoice");
+  const html = await res.text();
+  const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+  window.open(url, "_blank", "noopener");
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}

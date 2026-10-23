@@ -9,11 +9,12 @@ Self-hostable, agentic-first bookkeeping for Swedish small companies (aktiebolag
 - **Time tracking:** projects, activity types with message templates, timer, CSV export.
 - **Ledger:** append-only double-entry books, propose-and-approve postings, hash-chained integrity check, SIE 4 export, trial balance, audit log.
 - **Receipts and bank:** immutable receipts archive (web, CLI or agent upload), bank CSV import, explainable receipt matching, bank lines booked as draft vouchers.
+- **Invoices:** customers, invoices built from tracked hours at the project's hourly rate or fixed fee (hours can't be billed twice), a gap-free number series assigned at issue, a draft ledger voucher for the sale, and a printable HTML invoice. Domestic customers and 25, 12 or 6 percent VAT only.
 - **VAT:** VAT codes on ledger lines and a quarterly report with readiness checks. Every box mapping starts UNVERIFIED until the owner checks it against SKV 4700. Nothing is filed automatically.
 - **Payroll:** employees, monthly pay runs, employer contributions by age class, a locked run that proposes a ledger voucher, and an AGI XML file that validates against Skatteverket's published schema. Every rate starts UNVERIFIED and preliminary tax is entered per person.
 - **Access:** username and password login, expiring sessions, permanent access tokens, and agent users that can propose but never approve.
 
-Not built yet: Skatteverket's tax tables, taxable benefits, absence and holiday pay, the annual report and INK2, live bank feeds.
+Not built yet: EU and export invoices, credit notes, invoice payment matching, Skatteverket's tax tables, taxable benefits, absence and holiday pay, the annual report and INK2, live bank feeds.
 
 ## Try it
 

@@ -44,6 +44,20 @@ check "the CSV export carries rate and amount" 'admin time export --from 2026-10
 check "a fixed fee counts once, not per hour" 'admin project rate MOHV --fixed 50000 && admin --json time report --from 2026-10-01 --to 2026-10-31 | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d[\"total_amount\"][\"SEK\"]==\"50000.00\" else 1)"'
 check "a rate can be cleared" 'admin project rate MOHV --clear'
 
+admin company set "Testbolaget AB" --org-number 556026-9986 --address "Testgatan 1, 111 22 Stockholm" --f-skatt >/dev/null
+admin customer add "Kund AB" --address "Kundgatan 2, 222 33 Goteborg" >/dev/null
+admin customer add "Utan Adress AB" >/dev/null
+admin project rate MOHV --hourly 900 >/dev/null
+check "an invoice is built from tracked hours at the project rate" 'admin --json invoice from-time --customer "Kund AB" --project MOHV --from 2026-10-01 --to 2026-10-31 | python3 -c "import sys,json; i=json.load(sys.stdin)[\"invoice\"]; t=i[\"totals\"]; sys.exit(0 if t[\"net\"]==\"900.00\" and t[\"vat\"]==\"225.00\" and t[\"gross\"]==\"1125.00\" and i[\"status\"]==\"draft\" else 1)"'
+check "the same hours cannot be invoiced twice" '! admin invoice from-time --customer "Kund AB" --project MOHV --from 2026-10-01 --to 2026-10-31'
+check "an agent cannot issue an invoice" '! agent invoice issue 1'
+check "a customer without an address blocks issuing" 'admin invoice create --customer "Utan Adress AB" --line "Konsult|1|st|100" >/dev/null && ! admin invoice issue 2'
+check "issuing numbers the invoice F1 and proposes a voucher" 'admin --json invoice issue 1 | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d[\"invoice\"][\"label\"]==\"F1\" and d[\"invoice\"][\"status\"]==\"issued\" and d[\"invoice\"][\"ledger_draft_id\"] else 1)"'
+check "an issued invoice cannot be edited or deleted" '! sqlite3 $T/s.db "UPDATE invoice SET due_date = \"2030-01-01\" WHERE id = 1" && ! admin invoice delete 1'
+check "the printable invoice has the required fields" 'admin invoice html 1 --out $T/inv.html >/dev/null && grep -q "Invoice F1" $T/inv.html && grep -q "VAT no: SE5560269986" $T/inv.html && grep -q "Kund AB" $T/inv.html && grep -q "225.00" $T/inv.html'
+check "customer names cannot inject markup into the invoice" 'admin customer add "<script>x</script> AB" --address "Gatan 1" >/dev/null && admin invoice create --customer "<script>x</script> AB" --line "x|1|st|1" >/dev/null && admin invoice html 3 --out $T/inv2.html >/dev/null && ! grep -q "<script>x" $T/inv2.html'
+check "foreign customers are refused for now" '! admin customer add "Foreign Ltd" --country DE --address "Strasse 1" >/dev/null || ! admin invoice create --customer "Foreign Ltd" --line "x|1|st|1"'
+
 printf 'receipt' > $T/r.txt
 printf 'Datum;Text;Belopp\n2026-10-21;GITHUB INC;-40,00\n' > $T/b.csv
 check "bank CSV imports" 'admin bank import $T/b.csv'

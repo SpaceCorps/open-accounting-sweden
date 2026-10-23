@@ -28,7 +28,11 @@ CREATE TABLE IF NOT EXISTS company(
   org_number TEXT NOT NULL DEFAULT '',
   contact_name TEXT NOT NULL DEFAULT '',
   contact_phone TEXT NOT NULL DEFAULT '',
-  contact_email TEXT NOT NULL DEFAULT ''
+  contact_email TEXT NOT NULL DEFAULT '',
+  address TEXT NOT NULL DEFAULT '',
+  vat_number TEXT NOT NULL DEFAULT '',
+  payment_info TEXT NOT NULL DEFAULT '',
+  f_skatt INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS account(
   number INTEGER PRIMARY KEY,
@@ -115,6 +119,8 @@ const SEED: &[(i64, &str, &str)] = &[
     (2710, "Personalskatt", "S"),
     (2731, "Avrakning lagstadgade sociala avgifter", "S"),
     (3041, "Forsaljning tjanster Sverige 25 procent moms", "I"),
+    (3042, "Forsaljning tjanster Sverige 12 procent moms", "I"),
+    (3043, "Forsaljning tjanster Sverige 6 procent moms", "I"),
     (5410, "Forbrukningsinventarier", "K"),
     (2621, "Utgaende moms forsaljning Sverige 12 procent", "S"),
     (2624, "Utgaende moms omvand skattskyldighet 12 procent", "S"),
@@ -178,6 +184,10 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
         ("company", "contact_name"),
         ("company", "contact_phone"),
         ("company", "contact_email"),
+        ("company", "address"),
+        ("company", "vat_number"),
+        ("company", "payment_info"),
+        ("company", "f_skatt"),
     ] {
         let has: i64 = conn.query_row(
             &format!("SELECT COUNT(*) FROM pragma_table_info('{t}') WHERE name = '{col}'"),
@@ -185,7 +195,11 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
             |r| r.get(0),
         )?;
         if has == 0 {
-            let decl = if col == "vat_code" { "TEXT" } else { "TEXT NOT NULL DEFAULT ''" };
+            let decl = match col {
+                "vat_code" => "TEXT",
+                "f_skatt" => "INTEGER NOT NULL DEFAULT 0",
+                _ => "TEXT NOT NULL DEFAULT ''",
+            };
             conn.execute_batch(&format!("ALTER TABLE {t} ADD COLUMN {col} {decl}"))?;
         }
     }
@@ -468,18 +482,24 @@ pub struct CompanyIn {
     contact_name: Option<String>,
     contact_phone: Option<String>,
     contact_email: Option<String>,
+    address: Option<String>,
+    vat_number: Option<String>,
+    payment_info: Option<String>,
+    f_skatt: Option<bool>,
 }
 
 pub async fn get_company(State(st): State<Shared>) -> ApiResult {
     let conn = st.conn.lock().unwrap();
     let c: Option<Value> = conn
         .query_row(
-            "SELECT name, org_number, contact_name, contact_phone, contact_email FROM company WHERE id = 1",
+            "SELECT name, org_number, contact_name, contact_phone, contact_email, address, vat_number, payment_info, f_skatt FROM company WHERE id = 1",
             [],
             |r| {
                 Ok(json!({"name": r.get::<_, String>(0)?, "org_number": r.get::<_, String>(1)?,
                           "contact_name": r.get::<_, String>(2)?, "contact_phone": r.get::<_, String>(3)?,
-                          "contact_email": r.get::<_, String>(4)?}))
+                          "contact_email": r.get::<_, String>(4)?, "address": r.get::<_, String>(5)?,
+                          "vat_number": r.get::<_, String>(6)?, "payment_info": r.get::<_, String>(7)?,
+                          "f_skatt": r.get::<_, i64>(8)? != 0}))
             },
         )
         .ok();
@@ -497,19 +517,37 @@ pub async fn set_company(
     let cname = clean_text(b.contact_name.as_deref().unwrap_or(""), "contact_name", 50)?;
     let phone = clean_text(b.contact_phone.as_deref().unwrap_or(""), "contact_phone", 20)?;
     let email = clean_text(b.contact_email.as_deref().unwrap_or(""), "contact_email", 100)?;
+    let address = clean_text(b.address.as_deref().unwrap_or(""), "address", 300).or_else(|_| {
+        // Addresses may span lines.
+        let v = b.address.as_deref().unwrap_or("").trim().to_string();
+        if v.chars().count() > 300 || v.chars().any(|c| c.is_control() && c != '\n') {
+            Err(ApiError::invalid("address is too long or has control characters"))
+        } else {
+            Ok(v)
+        }
+    })?;
+    let vat_number = clean_text(b.vat_number.as_deref().unwrap_or(""), "vat_number", 30)?;
+    let payment_info = b.payment_info.as_deref().unwrap_or("").trim().to_string();
+    if payment_info.chars().count() > 300 || payment_info.chars().any(|c| c.is_control() && c != '\n') {
+        return Err(ApiError::invalid("payment_info is too long or has control characters"));
+    }
+    let f_skatt = b.f_skatt.unwrap_or(false);
     if name.is_empty() {
         return Err(ApiError::invalid("company name is empty"));
     }
     let conn = st.conn.lock().unwrap();
     conn.execute(
-        "INSERT INTO company(id, name, org_number, contact_name, contact_phone, contact_email) VALUES (1, ?1, ?2, ?3, ?4, ?5)
+        "INSERT INTO company(id, name, org_number, contact_name, contact_phone, contact_email, address, vat_number, payment_info, f_skatt)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT(id) DO UPDATE SET name = excluded.name, org_number = excluded.org_number,
-           contact_name = excluded.contact_name, contact_phone = excluded.contact_phone, contact_email = excluded.contact_email",
-        params![name, org, cname, phone, email],
+           contact_name = excluded.contact_name, contact_phone = excluded.contact_phone, contact_email = excluded.contact_email,
+           address = excluded.address, vat_number = excluded.vat_number, payment_info = excluded.payment_info, f_skatt = excluded.f_skatt",
+        params![name, org, cname, phone, email, address, vat_number, payment_info, f_skatt as i64],
     )?;
     audit(&conn, &actor, "company.set", "1", &name)?;
     Ok(Json(json!({"company": {"name": name, "org_number": org, "contact_name": cname,
-                               "contact_phone": phone, "contact_email": email}})))
+                               "contact_phone": phone, "contact_email": email, "address": address,
+                               "vat_number": vat_number, "payment_info": payment_info, "f_skatt": f_skatt}})))
 }
 
 #[derive(Deserialize)]

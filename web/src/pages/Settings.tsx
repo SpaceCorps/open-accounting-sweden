@@ -12,12 +12,16 @@ interface User { username: string; role: string; created_at: string }
 interface Token { id: number; name: string; created_at: string; last_used_at: string | null }
 
 function CompanySection({ canEdit }: { canEdit: boolean }) {
-  const company = useData<{ company: { name: string; org_number: string; contact_name: string; contact_phone: string; contact_email: string } | null }>("/company");
+  const company = useData<{ company: { name: string; org_number: string; contact_name: string; contact_phone: string; contact_email: string; address: string; vat_number: string; payment_info: string; f_skatt: boolean } | null }>("/company");
   const [name, setName] = useState("");
   const [org, setOrg] = useState("");
   const [cname, setCname] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
+  const [address, setAddress] = useState("");
+  const [vatNo, setVatNo] = useState("");
+  const [payment, setPayment] = useState("");
+  const [fskatt, setFskatt] = useState(false);
   useEffect(() => {
     if (company.data?.company) {
       setName(company.data.company.name);
@@ -25,11 +29,15 @@ function CompanySection({ canEdit }: { canEdit: boolean }) {
       setCname(company.data.company.contact_name);
       setPhone(company.data.company.contact_phone);
       setEmail(company.data.company.contact_email);
+      setAddress(company.data.company.address);
+      setVatNo(company.data.company.vat_number);
+      setPayment(company.data.company.payment_info);
+      setFskatt(company.data.company.f_skatt);
     }
   }, [company.data]);
   async function save() {
     try {
-      await api("/company", { method: "POST", body: { name, org_number: org, contact_name: cname, contact_phone: phone, contact_email: email } });
+      await api("/company", { method: "POST", body: { name, org_number: org, contact_name: cname, contact_phone: phone, contact_email: email, address: address.replace(/, */g, "\n"), vat_number: vatNo, payment_info: payment, f_skatt: fskatt } });
       notifyOk("Company saved");
       company.reload();
     } catch (e) {
@@ -37,13 +45,17 @@ function CompanySection({ canEdit }: { canEdit: boolean }) {
     }
   }
   return (
-    <Section title="Company" description="Used in the SIE export header and the AGI file.">
+    <Section title="Company" description="Used in the SIE export header, the AGI file and your invoices.">
       <div className="oas-form" style={{ maxWidth: 420 }}>
         <TextField label="Company name" value={name} onChange={setName} />
         <TextField label="Organisation number" value={org} onChange={setOrg} placeholder="556026-9986" />
         <TextField label="Technical contact name" value={cname} onChange={setCname} hint="Named in the AGI file sent to Skatteverket" />
         <TextField label="Contact phone" value={phone} onChange={setPhone} />
         <TextField label="Contact email" value={email} onChange={setEmail} />
+        <TextField label="Address on invoices" value={address.replace(/\n/g, ", ")} onChange={setAddress} hint="Street, postcode and city, separated by commas" />
+        <TextField label="VAT number" value={vatNo} onChange={setVatNo} hint="Leave empty to use SE + organisation number + 01" />
+        <TextField label="Payment details" value={payment} onChange={setPayment} hint="For example: Bankgiro 123-4567" />
+        <label className="oas-actions" style={{ cursor: "pointer" }}><input type="checkbox" checked={fskatt} onChange={(e) => setFskatt(e.target.checked)} /> <span>Approved for F-tax (printed on invoices)</span></label>
         <div><Button disabled={!canEdit || !name.trim()} onClick={() => void save()}>Save</Button></div>
         {!canEdit ? <p className="oas-muted">Only an admin can change company details.</p> : null}
       </div>

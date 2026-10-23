@@ -53,7 +53,19 @@ oas vat report [--quarter 2026-Q3] | config | verify-box BOX [--unverify] | box-
 oas employee add NAME --identity YYYYMMDDNNNC | list | deactivate ID
 oas payroll run --period 2026-10 --pay-date 2026-10-25 --line EMPLOYEE_ID=GROSS[:TAX] ...   (admin; TAX in SEK, or GROSS:30% for a percentage)
 oas payroll list | show ID | approve ID | delete ID | agi ID [--out FILE] | rates | set-rate KEY VALUE | verify-rate KEY [--unverify] | not-used KEY [--used]
+oas customer add NAME --address STREET,POSTCODE,CITY [--org-number N --vat-number V --email E] | list
+oas invoice create --customer C --line 'Description|12.5|h|900' ... [--vat 25] [--due-days 30] | from-time --customer C --project P [--from D --to D] | list | show ID | issue ID | delete ID | html ID --out FILE
 oas agent-readme
+
+## Invoices
+- Domestic customers only (country SE), VAT 25, 12 or 6 percent. `invoice from-time` bills a project's
+  uninvoiced tracked hours at its hourly rate (or its fixed fee) and marks those entries invoiced so
+  they cannot be billed twice. Set the rate first with `oas project rate`.
+- Anyone can create a draft. Only an admin runs `invoice issue`, which assigns the next gap-free
+  number, locks the invoice and proposes the ledger voucher (1510 / 3041-3043 / 2611-2631); a human
+  still approves that voucher. Issuing needs the company address and the customer's address.
+- Issued invoices cannot be changed or deleted. EU and export invoices, credit notes and payment
+  matching are not built yet.
 
 ## Payroll
 - Payroll is admin only; agents see masked identity numbers. Employees need a valid personnummer.
@@ -184,6 +196,16 @@ enum Cmd {
         #[command(subcommand)]
         action: PayrollCmd,
     },
+    /// Customers
+    Customer {
+        #[command(subcommand)]
+        action: CustomerCmd,
+    },
+    /// Customer invoices
+    Invoice {
+        #[command(subcommand)]
+        action: InvoiceCmd,
+    },
     /// VAT return preparation
     Vat {
         #[command(subcommand)]
@@ -255,6 +277,79 @@ enum PayrollCmd {
         /// Undo: the rate counts again
         #[arg(long)]
         used: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum CustomerCmd {
+    Add {
+        name: String,
+        #[arg(long)]
+        org_number: Option<String>,
+        #[arg(long)]
+        vat_number: Option<String>,
+        /// Postal address (use \n for line breaks)
+        #[arg(long)]
+        address: Option<String>,
+        /// Two-letter country code, default SE (only SE is supported for invoices)
+        #[arg(long)]
+        country: Option<String>,
+        #[arg(long)]
+        email: Option<String>,
+    },
+    List,
+}
+
+#[derive(Subcommand)]
+enum InvoiceCmd {
+    /// Create a draft invoice with one or more lines
+    Create {
+        #[arg(long)]
+        customer: String,
+        /// DESCRIPTION|QUANTITY|UNIT|UNIT_PRICE, repeatable, for example "Consulting|12.5|h|900"
+        #[arg(long = "line")]
+        lines: Vec<String>,
+        /// VAT rate: 25, 12 or 6 (default 25)
+        #[arg(long)]
+        vat: Option<i64>,
+        #[arg(long)]
+        issue_date: Option<String>,
+        /// Days until payment is due, default 30
+        #[arg(long)]
+        due_days: Option<i64>,
+        #[arg(long)]
+        notes: Option<String>,
+    },
+    /// Create a draft from a project's uninvoiced tracked time
+    FromTime {
+        #[arg(long)]
+        customer: String,
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long)]
+        vat: Option<i64>,
+        #[arg(long)]
+        due_days: Option<i64>,
+        #[arg(long)]
+        issue_date: Option<String>,
+        #[arg(long)]
+        notes: Option<String>,
+    },
+    List,
+    Show { id: i64 },
+    /// Assign the invoice number, lock it and propose the ledger voucher (admin only)
+    Issue { id: i64 },
+    /// Delete a draft invoice (admin only)
+    Delete { id: i64 },
+    /// Write the printable invoice as an HTML file (open it in a browser and print to PDF)
+    Html {
+        id: i64,
+        #[arg(long)]
+        out: PathBuf,
     },
 }
 
@@ -384,6 +479,18 @@ enum CompanyCmd {
         contact_phone: Option<String>,
         #[arg(long)]
         contact_email: Option<String>,
+        /// Company address for invoices (use \n for line breaks)
+        #[arg(long)]
+        address: Option<String>,
+        /// VAT number; defaults to SE + the organisation number + 01 when empty
+        #[arg(long)]
+        vat_number: Option<String>,
+        /// Payment details printed on invoices, for example "Bankgiro 123-4567"
+        #[arg(long)]
+        payment_info: Option<String>,
+        /// The company is approved for F-tax (printed on invoices)
+        #[arg(long)]
+        f_skatt: bool,
     },
     Show,
 }
@@ -1047,9 +1154,11 @@ fn run(cli: Cli) -> Result<(), Failure> {
         Cmd::Company { action } => {
             let cfg = load_config()?;
             match action {
-                CompanyCmd::Set { name, org_number, contact_name, contact_phone, contact_email } => {
+                CompanyCmd::Set { name, org_number, contact_name, contact_phone, contact_email, address, vat_number, payment_info, f_skatt } => {
                     let body = json!({"name": name, "org_number": org_number, "contact_name": contact_name,
-                        "contact_phone": contact_phone, "contact_email": contact_email});
+                        "contact_phone": contact_phone, "contact_email": contact_email,
+                        "address": address.map(|a| a.replace("\\n", "\n")), "vat_number": vat_number,
+                        "payment_info": payment_info.map(|a| a.replace("\\n", "\n")), "f_skatt": f_skatt});
                     print_value(&call(&cfg, "POST", "/company", Some(&body))?, json_out);
                 }
                 CompanyCmd::Show => print_value(&call(&cfg, "GET", "/company", None)?, json_out),
@@ -1238,6 +1347,63 @@ fn run(cli: Cli) -> Result<(), Failure> {
                 PayrollCmd::VerifyRate { key, unverify } => {
                     let body = json!({"verified": !unverify});
                     print_value(&call(&cfg, "POST", &format!("/payroll/rates/{}/verify", encode(&key)), Some(&body))?, json_out);
+                }
+            }
+            Ok(())
+        }
+        Cmd::Customer { action } => {
+            let cfg = load_config()?;
+            match action {
+                CustomerCmd::Add { name, org_number, vat_number, address, country, email } => {
+                    let body = json!({"name": name, "org_number": org_number, "vat_number": vat_number,
+                        "address": address.map(|a| a.replace("\\n", "\n")), "country": country, "email": email});
+                    print_value(&call(&cfg, "POST", "/customers", Some(&body))?, json_out);
+                }
+                CustomerCmd::List => print_value(&call(&cfg, "GET", "/customers", None)?, json_out),
+            }
+            Ok(())
+        }
+        Cmd::Invoice { action } => {
+            let cfg = load_config()?;
+            let customer_id = |name: &str| -> Result<i64, Failure> {
+                let v = call(&cfg, "GET", "/customers", None)?;
+                let wanted = name.trim().to_lowercase();
+                v["customers"]
+                    .as_array()
+                    .and_then(|l| l.iter().find(|c| c["name"].as_str().is_some_and(|n| n.to_lowercase() == wanted)))
+                    .and_then(|c| c["id"].as_i64())
+                    .ok_or_else(|| Failure::new("not_found", format!("no customer named '{name}'; add it with `oas customer add`")))
+            };
+            match action {
+                InvoiceCmd::Create { customer, lines, vat, issue_date, due_days, notes } => {
+                    let mut out = vec![];
+                    for l in &lines {
+                        let p: Vec<&str> = l.split('|').collect();
+                        if p.len() != 4 {
+                            return Err(Failure::new("invalid_input", format!("expected DESCRIPTION|QUANTITY|UNIT|UNIT_PRICE, got '{l}'")));
+                        }
+                        out.push(json!({"description": p[0].trim(), "quantity": p[1].trim(), "unit": p[2].trim(), "unit_price": p[3].trim()}));
+                    }
+                    let body = json!({"customer_id": customer_id(&customer)?, "vat_rate": vat, "issue_date": issue_date,
+                        "due_days": due_days, "notes": notes, "lines": out});
+                    print_value(&call(&cfg, "POST", "/invoices", Some(&body))?, json_out);
+                }
+                InvoiceCmd::FromTime { customer, project, from, to, vat, due_days, issue_date, notes } => {
+                    let body = json!({"customer_id": customer_id(&customer)?, "project": project, "from": from, "to": to,
+                        "vat_rate": vat, "due_days": due_days, "issue_date": issue_date, "notes": notes});
+                    print_value(&call(&cfg, "POST", "/invoices/from-time", Some(&body))?, json_out);
+                }
+                InvoiceCmd::List => print_value(&call(&cfg, "GET", "/invoices", None)?, json_out),
+                InvoiceCmd::Show { id } => print_value(&call(&cfg, "GET", &format!("/invoices/{id}"), None)?, json_out),
+                InvoiceCmd::Issue { id } => print_value(&call(&cfg, "POST", &format!("/invoices/{id}/issue"), None)?, json_out),
+                InvoiceCmd::Delete { id } => print_value(&call(&cfg, "POST", &format!("/invoices/{id}/delete"), None)?, json_out),
+                InvoiceCmd::Html { id, out } => {
+                    let (status, bytes) = request_bytes(&cfg, &format!("/invoices/{id}/html"))?;
+                    if !(200..300).contains(&status) {
+                        return Err(failure_from(&String::from_utf8_lossy(&bytes)));
+                    }
+                    std::fs::write(&out, &bytes).map_err(|e| Failure::new("internal", e.to_string()))?;
+                    print_value(&json!({"status": "ok", "file": out.display().to_string(), "bytes": bytes.len()}), json_out);
                 }
             }
             Ok(())
