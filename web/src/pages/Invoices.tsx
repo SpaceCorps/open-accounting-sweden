@@ -189,7 +189,7 @@ export function InvoicesPage({ me }: { me: Me }) {
     { name: "customer", header: "Customer", accessor: (i) => i.customer.name },
     { name: "issue_date", header: "Date", width: "120px" },
     { name: "due_date", header: "Due", width: "120px" },
-    { name: "gross", header: "Total", align: "Right", accessor: (i) => parseFloat(i.totals.gross), cell: (_, i) => `${i.totals.gross} ${i.currency}` },
+    { name: "net", header: "Amount excl. VAT", align: "Right", accessor: (i) => parseFloat(i.totals.net), cell: (_, i) => `${i.totals.net} ${i.currency}` },
     { name: "status", header: "Status", cell: (v) => <Badge variant={v === "issued" ? "success" : "info"}>{v as string}</Badge> },
   ];
   const actions = (i: Invoice): DataTableRowAction<Invoice>[] => [

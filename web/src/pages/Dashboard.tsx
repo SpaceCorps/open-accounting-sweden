@@ -42,9 +42,10 @@ export function Dashboard({ me }: { me: Me }) {
 
       <div className="oas-kpis">
         <Kpi
-          label={`Projected income, ${income.data?.month ?? "this month"}`}
+          label="Projected income this month"
           value={`${income.data?.projected ?? "0.00"} kr`}
-          hint={income.data ? `${income.data.earned_so_far} kr earned so far, excl. VAT. Estimate from ${income.data.workdays_elapsed} of ${income.data.workdays_total} workdays.` : ""}
+          badge={<Badge variant="secondary">excl. VAT</Badge>}
+          hint={income.data ? `${income.data.earned_so_far} kr so far` : ""}
         />
         <Kpi label="Hours this week" value={hoursText(week.data?.total_hours ?? 0)} hint={`${week.data?.entries ?? 0} entries`} />
         <Kpi label="Hours this month" value={hoursText(month.data?.total_hours ?? 0)} hint={`${projects.length} projects`} />
