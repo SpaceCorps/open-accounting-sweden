@@ -1253,9 +1253,12 @@ async fn main() {
         eprintln!("cannot open database {db_path}: {e}");
         std::process::exit(1);
     });
+    // Loopback by default, so a local run is not reachable from the network (and Windows does not
+    // ask for a firewall rule). The container sets OAS_HOST=0.0.0.0; PORT comes from the host platform.
     let bind = std::env::var("OAS_BIND").unwrap_or_else(|_| {
         format!(
-            "0.0.0.0:{}",
+            "{}:{}",
+            std::env::var("OAS_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
             std::env::var("PORT").unwrap_or_else(|_| "8080".into())
         )
     });

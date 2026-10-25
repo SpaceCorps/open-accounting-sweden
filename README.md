@@ -23,6 +23,8 @@ OAS_TOKEN=$(openssl rand -hex 32) OAS_AGENT_TOKEN=$(openssl rand -hex 32) cargo 
 cargo run -p oas-cli -- auth login http://127.0.0.1:8080
 ```
 
+The server listens on `127.0.0.1:8080` (set `PORT` to change the port). To reach it from other machines on your network, set `OAS_HOST=0.0.0.0` (or `OAS_BIND=0.0.0.0:8080`); on Windows the firewall then asks once. The Docker image already listens on all interfaces.
+
 `OAS_TOKEN` is a bootstrap admin token (can approve postings). Use it once to create your own account, then sign in with a username and password:
 
 ```bash

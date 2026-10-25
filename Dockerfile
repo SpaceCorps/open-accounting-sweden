@@ -28,6 +28,8 @@ RUN useradd --system --uid 10001 oas && mkdir /data && chown oas /data
 COPY --from=build /src/target/release/oas-server /usr/local/bin/oas-server
 COPY --from=web /src/web/dist /srv/web
 USER oas
+# Listen on all interfaces inside the container; the server's own default is loopback only.
+ENV OAS_HOST=0.0.0.0
 ENV OAS_DB=/data/oas.db
 ENV OAS_WEB_DIR=/srv/web
 VOLUME /data
