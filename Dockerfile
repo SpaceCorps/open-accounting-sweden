@@ -8,11 +8,13 @@ RUN git clone https://github.com/SpaceCorps/storybook.git /storybook \
  && git -C /storybook checkout --quiet "$STORYBOOK_REF"
 WORKDIR /storybook
 RUN pnpm install --frozen-lockfile && pnpm exec vp pack
+# web/package.json points at ../../storybook, which from /src/web is /storybook, as on a dev machine.
 WORKDIR /src/web
-COPY web/package.json web/pnpm-workspace.yaml web/.pnpmfile.cjs ./
-RUN OAS_STORYBOOK_PATH=/storybook pnpm install --no-frozen-lockfile
+COPY web/package.json web/pnpm-workspace.yaml web/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 COPY web/index.html web/tsconfig.json web/vite.config.ts ./
 COPY web/src ./src
+COPY web/public ./public
 RUN pnpm exec vp build
 
 FROM rust:1-bookworm AS build
