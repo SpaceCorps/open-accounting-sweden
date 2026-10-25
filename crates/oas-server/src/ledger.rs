@@ -156,10 +156,22 @@ fn require_admin(role: Role) -> Result<(), ApiError> {
     }
 }
 
-pub(crate) fn audit(conn: &Connection, actor: &Actor, action: &str, object: &str, detail: &str) -> Result<(), ApiError> {
+pub(crate) fn audit(
+    conn: &Connection,
+    actor: &Actor,
+    action: &str,
+    object: &str,
+    detail: &str,
+) -> Result<(), ApiError> {
     conn.execute(
         "INSERT INTO audit_log(at, actor, action, object, detail) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![oas_core::utc_string(Utc::now()), actor.name, action, object, detail],
+        params![
+            oas_core::utc_string(Utc::now()),
+            actor.name,
+            action,
+            object,
+            detail
+        ],
     )?;
     Ok(())
 }
@@ -222,8 +234,20 @@ fn validate_lines(conn: &Connection, lines: &[LineIn]) -> Result<Vec<Ln>, ApiErr
         if exists == 0 {
             return Err(ApiError::invalid(format!("unknown account {}", l.account)));
         }
-        let d = l.debit.as_deref().map(parse_amount).transpose().map_err(ApiError::invalid)?.unwrap_or(0);
-        let c = l.credit.as_deref().map(parse_amount).transpose().map_err(ApiError::invalid)?.unwrap_or(0);
+        let d = l
+            .debit
+            .as_deref()
+            .map(parse_amount)
+            .transpose()
+            .map_err(ApiError::invalid)?
+            .unwrap_or(0);
+        let c = l
+            .credit
+            .as_deref()
+            .map(parse_amount)
+            .transpose()
+            .map_err(ApiError::invalid)?
+            .unwrap_or(0);
         if (d > 0) == (c > 0) {
             return Err(ApiError::invalid(format!(
                 "line for account {} needs exactly one of debit or credit above zero",
@@ -233,10 +257,18 @@ fn validate_lines(conn: &Connection, lines: &[LineIn]) -> Result<Vec<Ln>, ApiErr
         if d > MAX_ORE || c > MAX_ORE {
             return Err(ApiError::invalid("amount too large"));
         }
-        let vat = l.vat_code.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(str::to_uppercase);
+        let vat = l
+            .vat_code
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_uppercase);
         if let Some(code) = &vat {
-            let known: i64 =
-                conn.query_row("SELECT COUNT(*) FROM vat_code WHERE code = ?1", params![code], |r| r.get(0))?;
+            let known: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM vat_code WHERE code = ?1",
+                params![code],
+                |r| r.get(0),
+            )?;
             if known == 0 {
                 return Err(ApiError::invalid(format!("unknown VAT code {code}")));
             }
@@ -264,14 +296,20 @@ fn check_date(s: &str) -> Result<(), ApiError> {
 fn clean_text(s: &str, field: &str, max: usize) -> Result<String, ApiError> {
     let v = s.trim();
     if v.chars().count() > max || v.chars().any(|c| c.is_control()) {
-        return Err(ApiError::invalid(format!("{field} is too long or has control characters")));
+        return Err(ApiError::invalid(format!(
+            "{field} is too long or has control characters"
+        )));
     }
     Ok(v.to_string())
 }
 
 fn account_name(conn: &Connection, n: i64) -> String {
-    conn.query_row("SELECT name FROM account WHERE number = ?1", params![n], |r| r.get(0))
-        .unwrap_or_default()
+    conn.query_row(
+        "SELECT name FROM account WHERE number = ?1",
+        params![n],
+        |r| r.get(0),
+    )
+    .unwrap_or_default()
 }
 
 pub(crate) fn draft_view(conn: &Connection, id: i64) -> Result<Value, ApiError> {
@@ -290,10 +328,18 @@ pub(crate) fn draft_view(conn: &Connection, id: i64) -> Result<Value, ApiError> 
             },
         )
         .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such draft"))?;
-    let mut stmt =
-        conn.prepare("SELECT account, debit, credit, vat_code FROM draft_line WHERE draft_id = ?1 ORDER BY id")?;
+    let mut stmt = conn.prepare(
+        "SELECT account, debit, credit, vat_code FROM draft_line WHERE draft_id = ?1 ORDER BY id",
+    )?;
     let lines: Vec<Value> = stmt
-        .query_map(params![id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, Option<String>>(3)?)))?
+        .query_map(params![id], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, Option<String>>(3)?,
+            ))
+        })?
         .filter_map(Result::ok)
         .map(|(a, d, c, v)| {
             json!({"account": a, "name": account_name(conn, a),
@@ -306,17 +352,26 @@ pub(crate) fn draft_view(conn: &Connection, id: i64) -> Result<Value, ApiError> 
         .filter_map(Result::ok)
         .collect();
     let bank_tx: Option<i64> = conn
-        .query_row("SELECT bank_transaction_id FROM draft_bank WHERE draft_id = ?1", params![id], |r| r.get(0))
+        .query_row(
+            "SELECT bank_transaction_id FROM draft_bank WHERE draft_id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
         .ok();
-    Ok(json!({"id": id, "event_date": d.0, "description": d.1, "counterparty": d.2,
+    Ok(
+        json!({"id": id, "event_date": d.0, "description": d.1, "counterparty": d.2,
               "created_by": d.3, "created_at": d.4, "lines": lines, "documents": documents,
-              "bank_transaction_id": bank_tx}))
+              "bank_transaction_id": bank_tx}),
+    )
 }
 
 fn voucher_lines(conn: &Connection, voucher_id: i64) -> Result<Vec<Ln>, ApiError> {
-    let mut stmt =
-        conn.prepare("SELECT account, debit, credit, vat_code FROM entry WHERE voucher_id = ?1 ORDER BY line_no")?;
-    let rows = stmt.query_map(params![voucher_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+    let mut stmt = conn.prepare(
+        "SELECT account, debit, credit, vat_code FROM entry WHERE voucher_id = ?1 ORDER BY line_no",
+    )?;
+    let rows = stmt.query_map(params![voucher_id], |r| {
+        Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+    })?;
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
@@ -412,13 +467,35 @@ fn post_voucher(
         )
         .unwrap_or_else(|_| "genesis".into());
     let compile = Utc::now().format("%Y-%m-%d").to_string();
-    let hash = canonical(&prev_hash, SERIES, number, &compile, event_date, description, counterparty, corrects, lines);
+    let hash = canonical(
+        &prev_hash,
+        SERIES,
+        number,
+        &compile,
+        event_date,
+        description,
+        counterparty,
+        corrects,
+        lines,
+    );
     conn.execute(
         "INSERT INTO voucher(series, number, compile_date, event_date, description, counterparty,
             created_by, approved_by, created_at, corrects_voucher_id, prev_hash, hash)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-        params![SERIES, number, compile, event_date, description, counterparty, created_by,
-                approved_by, created_at, corrects, prev_hash, hash],
+        params![
+            SERIES,
+            number,
+            compile,
+            event_date,
+            description,
+            counterparty,
+            created_by,
+            approved_by,
+            created_at,
+            corrects,
+            prev_hash,
+            hash
+        ],
     )?;
     let id = conn.last_insert_rowid();
     for (i, (a, d, c, v)) in lines.iter().enumerate() {
@@ -431,7 +508,9 @@ fn post_voucher(
 }
 
 pub async fn me(Extension(actor): Extension<Actor>) -> Json<Value> {
-    Json(json!({"username": actor.name, "role": actor.role.name(), "can_approve": actor.role == Role::Admin}))
+    Json(
+        json!({"username": actor.name, "role": actor.role.name(), "can_approve": actor.role == Role::Admin}),
+    )
 }
 
 pub async fn list_accounts(State(st): State<Shared>) -> ApiResult {
@@ -439,8 +518,10 @@ pub async fn list_accounts(State(st): State<Shared>) -> ApiResult {
     let mut stmt = conn.prepare("SELECT number, name, kind FROM account ORDER BY number")?;
     let rows: Vec<Value> = stmt
         .query_map([], |r| {
-            Ok(json!({"number": r.get::<_, i64>(0)?, "name": r.get::<_, String>(1)?,
-                      "kind": r.get::<_, String>(2)?}))
+            Ok(
+                json!({"number": r.get::<_, i64>(0)?, "name": r.get::<_, String>(1)?,
+                      "kind": r.get::<_, String>(2)?}),
+            )
         })?
         .filter_map(Result::ok)
         .collect();
@@ -465,14 +546,21 @@ pub async fn add_account(
     }
     let kind = b.kind.trim().to_uppercase();
     if !["T", "S", "K", "I"].contains(&kind.as_str()) {
-        return Err(ApiError::invalid("kind must be T (asset), S (liability/equity), K (cost) or I (income)"));
+        return Err(ApiError::invalid(
+            "kind must be T (asset), S (liability/equity), K (cost) or I (income)",
+        ));
     }
     let name = clean_text(&b.name, "name", 100)?;
     let conn = st.conn.lock().unwrap();
-    conn.execute("INSERT INTO account(number, name, kind) VALUES (?1, ?2, ?3)", params![b.number, name, kind])
-        .map_err(|_| ApiError::new(StatusCode::CONFLICT, "conflict", "account already exists"))?;
+    conn.execute(
+        "INSERT INTO account(number, name, kind) VALUES (?1, ?2, ?3)",
+        params![b.number, name, kind],
+    )
+    .map_err(|_| ApiError::new(StatusCode::CONFLICT, "conflict", "account already exists"))?;
     audit(&conn, &actor, "account.add", &b.number.to_string(), &name)?;
-    Ok(Json(json!({"account": {"number": b.number, "name": name, "kind": kind}})))
+    Ok(Json(
+        json!({"account": {"number": b.number, "name": name, "kind": kind}}),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -515,21 +603,35 @@ pub async fn set_company(
     let name = clean_text(&b.name, "name", 100)?;
     let org = clean_text(b.org_number.as_deref().unwrap_or(""), "org_number", 20)?;
     let cname = clean_text(b.contact_name.as_deref().unwrap_or(""), "contact_name", 50)?;
-    let phone = clean_text(b.contact_phone.as_deref().unwrap_or(""), "contact_phone", 20)?;
-    let email = clean_text(b.contact_email.as_deref().unwrap_or(""), "contact_email", 100)?;
+    let phone = clean_text(
+        b.contact_phone.as_deref().unwrap_or(""),
+        "contact_phone",
+        20,
+    )?;
+    let email = clean_text(
+        b.contact_email.as_deref().unwrap_or(""),
+        "contact_email",
+        100,
+    )?;
     let address = clean_text(b.address.as_deref().unwrap_or(""), "address", 300).or_else(|_| {
         // Addresses may span lines.
         let v = b.address.as_deref().unwrap_or("").trim().to_string();
         if v.chars().count() > 300 || v.chars().any(|c| c.is_control() && c != '\n') {
-            Err(ApiError::invalid("address is too long or has control characters"))
+            Err(ApiError::invalid(
+                "address is too long or has control characters",
+            ))
         } else {
             Ok(v)
         }
     })?;
     let vat_number = clean_text(b.vat_number.as_deref().unwrap_or(""), "vat_number", 30)?;
     let payment_info = b.payment_info.as_deref().unwrap_or("").trim().to_string();
-    if payment_info.chars().count() > 300 || payment_info.chars().any(|c| c.is_control() && c != '\n') {
-        return Err(ApiError::invalid("payment_info is too long or has control characters"));
+    if payment_info.chars().count() > 300
+        || payment_info.chars().any(|c| c.is_control() && c != '\n')
+    {
+        return Err(ApiError::invalid(
+            "payment_info is too long or has control characters",
+        ));
     }
     let f_skatt = b.f_skatt.unwrap_or(false);
     if name.is_empty() {
@@ -545,9 +647,11 @@ pub async fn set_company(
         params![name, org, cname, phone, email, address, vat_number, payment_info, f_skatt as i64],
     )?;
     audit(&conn, &actor, "company.set", "1", &name)?;
-    Ok(Json(json!({"company": {"name": name, "org_number": org, "contact_name": cname,
+    Ok(Json(
+        json!({"company": {"name": name, "org_number": org, "contact_name": cname,
                                "contact_phone": phone, "contact_email": email, "address": address,
-                               "vat_number": vat_number, "payment_info": payment_info, "f_skatt": f_skatt}})))
+                               "vat_number": vat_number, "payment_info": payment_info, "f_skatt": f_skatt}}),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -563,7 +667,11 @@ pub(crate) struct NewDraft {
 }
 
 /// Validate and store a draft voucher, with optional receipts and the bank transaction it books.
-pub(crate) fn create_draft(conn: &mut Connection, actor: &Actor, b: &NewDraft) -> Result<i64, ApiError> {
+pub(crate) fn create_draft(
+    conn: &mut Connection,
+    actor: &Actor,
+    b: &NewDraft,
+) -> Result<i64, ApiError> {
     check_date(&b.event_date)?;
     let description = clean_text(&b.description, "description", 200)?;
     if description.is_empty() {
@@ -572,17 +680,29 @@ pub(crate) fn create_draft(conn: &mut Connection, actor: &Actor, b: &NewDraft) -
     let counterparty = clean_text(b.counterparty.as_deref().unwrap_or(""), "counterparty", 100)?;
     let lines = validate_lines(conn, &b.lines)?;
     for d in &b.documents {
-        let n: i64 = conn.query_row("SELECT COUNT(*) FROM document WHERE id = ?1", params![d], |r| r.get(0))?;
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM document WHERE id = ?1",
+            params![d],
+            |r| r.get(0),
+        )?;
         if n == 0 {
             return Err(ApiError::invalid(format!("unknown document {d}")));
         }
     }
     if let Some(txid) = b.bank_transaction_id {
         let status: Option<String> = conn
-            .query_row("SELECT status FROM bank_transaction WHERE id = ?1", params![txid], |r| r.get(0))
+            .query_row(
+                "SELECT status FROM bank_transaction WHERE id = ?1",
+                params![txid],
+                |r| r.get(0),
+            )
             .ok();
         match status.as_deref() {
-            None => return Err(ApiError::invalid(format!("unknown bank transaction {txid}"))),
+            None => {
+                return Err(ApiError::invalid(format!(
+                    "unknown bank transaction {txid}"
+                )));
+            }
             Some("new") => {}
             Some(other) => {
                 return Err(ApiError::new(
@@ -597,7 +717,13 @@ pub(crate) fn create_draft(conn: &mut Connection, actor: &Actor, b: &NewDraft) -
     tx.execute(
         "INSERT INTO draft(event_date, description, counterparty, created_by, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![b.event_date, description, counterparty, actor.name.as_str(), oas_core::utc_string(Utc::now())],
+        params![
+            b.event_date,
+            description,
+            counterparty,
+            actor.name.as_str(),
+            oas_core::utc_string(Utc::now())
+        ],
     )?;
     let id = tx.last_insert_rowid();
     for (a, d, c, v) in &lines {
@@ -607,11 +733,23 @@ pub(crate) fn create_draft(conn: &mut Connection, actor: &Actor, b: &NewDraft) -
         )?;
     }
     for d in &b.documents {
-        tx.execute("INSERT OR IGNORE INTO draft_document(draft_id, document_id) VALUES (?1, ?2)", params![id, d])?;
+        tx.execute(
+            "INSERT OR IGNORE INTO draft_document(draft_id, document_id) VALUES (?1, ?2)",
+            params![id, d],
+        )?;
     }
     if let Some(txid) = b.bank_transaction_id {
-        tx.execute("INSERT INTO draft_bank(draft_id, bank_transaction_id) VALUES (?1, ?2)", params![id, txid])
-            .map_err(|_| ApiError::new(StatusCode::CONFLICT, "conflict", "that bank transaction already has a draft"))?;
+        tx.execute(
+            "INSERT INTO draft_bank(draft_id, bank_transaction_id) VALUES (?1, ?2)",
+            params![id, txid],
+        )
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::CONFLICT,
+                "conflict",
+                "that bank transaction already has a draft",
+            )
+        })?;
     }
     audit(&tx, actor, "draft.propose", &id.to_string(), &description)?;
     tx.commit()?;
@@ -635,7 +773,8 @@ pub async fn list_drafts(State(st): State<Shared>) -> ApiResult {
         .query_map([], |r| r.get(0))?
         .filter_map(Result::ok)
         .collect();
-    let drafts: Result<Vec<Value>, ApiError> = ids.into_iter().map(|id| draft_view(&conn, id)).collect();
+    let drafts: Result<Vec<Value>, ApiError> =
+        ids.into_iter().map(|id| draft_view(&conn, id)).collect();
     Ok(Json(json!({"drafts": drafts?})))
 }
 
@@ -664,21 +803,47 @@ pub async fn approve(
     if dsum != csum || lines.len() < 2 {
         return Err(ApiError::invalid("draft does not balance"));
     }
-    let vid = post_voucher(&tx, &event_date, &description, &counterparty, &created_by, actor.name.as_str(), &created_at, None, &lines)?;
+    let vid = post_voucher(
+        &tx,
+        &event_date,
+        &description,
+        &counterparty,
+        &created_by,
+        actor.name.as_str(),
+        &created_at,
+        None,
+        &lines,
+    )?;
     tx.execute(
         "INSERT INTO voucher_document(voucher_id, document_id)
          SELECT ?1, document_id FROM draft_document WHERE draft_id = ?2",
         params![vid, id],
     )?;
     let bank_tx: Option<i64> = tx
-        .query_row("SELECT bank_transaction_id FROM draft_bank WHERE draft_id = ?1", params![id], |r| r.get(0))
+        .query_row(
+            "SELECT bank_transaction_id FROM draft_bank WHERE draft_id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
         .ok();
     if let Some(txid) = bank_tx {
-        tx.execute("INSERT INTO bank_booking(bank_transaction_id, voucher_id) VALUES (?1, ?2)", params![txid, vid])?;
-        tx.execute("UPDATE bank_transaction SET status = 'booked' WHERE id = ?1", params![txid])?;
+        tx.execute(
+            "INSERT INTO bank_booking(bank_transaction_id, voucher_id) VALUES (?1, ?2)",
+            params![txid, vid],
+        )?;
+        tx.execute(
+            "UPDATE bank_transaction SET status = 'booked' WHERE id = ?1",
+            params![txid],
+        )?;
     }
     tx.execute("DELETE FROM draft WHERE id = ?1", params![id])?;
-    audit(&tx, &actor, "voucher.approve", &vid.to_string(), &format!("draft {id}"))?;
+    audit(
+        &tx,
+        &actor,
+        "voucher.approve",
+        &vid.to_string(),
+        &format!("draft {id}"),
+    )?;
     tx.commit()?;
     Ok(Json(json!({"voucher": voucher_view(&conn, vid)?})))
 }
@@ -692,7 +857,11 @@ pub async fn reject(
     let conn = st.conn.lock().unwrap();
     let n = conn.execute("DELETE FROM draft WHERE id = ?1", params![id])?;
     if n == 0 {
-        return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such draft"));
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "no such draft",
+        ));
     }
     audit(&conn, &actor, "draft.reject", &id.to_string(), "")?;
     Ok(Json(json!({"status": "ok"})))
@@ -716,7 +885,8 @@ pub async fn list_vouchers(State(st): State<Shared>, Query(q): Query<Range>) -> 
         .query_map(params![q.from, q.to], |r| r.get(0))?
         .filter_map(Result::ok)
         .collect();
-    let vouchers: Result<Vec<Value>, ApiError> = ids.into_iter().map(|id| voucher_view(&conn, id)).collect();
+    let vouchers: Result<Vec<Value>, ApiError> =
+        ids.into_iter().map(|id| voucher_view(&conn, id)).collect();
     Ok(Json(json!({"vouchers": vouchers?})))
 }
 
@@ -746,16 +916,35 @@ pub async fn correct(
         |r| r.get(0),
     )?;
     if already > 0 {
-        return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "voucher is already corrected"));
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            "voucher is already corrected",
+        ));
     }
-    let reversed: Vec<Ln> =
-        voucher_lines(&tx, id)?.into_iter().map(|(a, d, c, v)| (a, c, d, v)).collect();
+    let reversed: Vec<Ln> = voucher_lines(&tx, id)?
+        .into_iter()
+        .map(|(a, d, c, v)| (a, c, d, v))
+        .collect();
     let text = format!("Rattelse av {series}{number}: {description}");
     let vid = post_voucher(
-        &tx, &event_date, &text, &counterparty, actor.name.as_str(), actor.name.as_str(),
-        &oas_core::utc_string(Utc::now()), Some(id), &reversed,
+        &tx,
+        &event_date,
+        &text,
+        &counterparty,
+        actor.name.as_str(),
+        actor.name.as_str(),
+        &oas_core::utc_string(Utc::now()),
+        Some(id),
+        &reversed,
     )?;
-    audit(&tx, &actor, "voucher.correct", &vid.to_string(), &format!("reverses {series}{number}"))?;
+    audit(
+        &tx,
+        &actor,
+        "voucher.correct",
+        &vid.to_string(),
+        &format!("reverses {series}{number}"),
+    )?;
     tx.commit()?;
     Ok(Json(json!({"voucher": voucher_view(&conn, vid)?})))
 }
@@ -770,7 +959,9 @@ pub async fn trial_balance(State(st): State<Shared>, Query(q): Query<Range>) -> 
          GROUP BY e.account ORDER BY e.account",
     )?;
     let rows: Vec<(i64, String, i64, i64)> = stmt
-        .query_map(params![from, to], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+        .query_map(params![from, to], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })?
         .filter_map(Result::ok)
         .collect();
     let (td, tc) = rows.iter().fold((0, 0), |(d, c), r| (d + r.2, c + r.3));
@@ -815,22 +1006,33 @@ pub async fn verify(State(st): State<Shared>) -> ApiResult {
             .filter_map(Result::ok)
             .collect();
         let mut prev = "genesis".to_string();
-        for (i, (id, number, compile, event, desc, cp, prev_hash, corrects, hash, ser)) in rows.iter().enumerate() {
+        for (i, (id, number, compile, event, desc, cp, prev_hash, corrects, hash, ser)) in
+            rows.iter().enumerate()
+        {
             total += 1;
             if *number != i as i64 + 1 {
-                issues.push(format!("{s}: gap or disorder at number {number} (expected {})", i + 1));
+                issues.push(format!(
+                    "{s}: gap or disorder at number {number} (expected {})",
+                    i + 1
+                ));
             }
             if *prev_hash != prev {
-                issues.push(format!("{s}{number}: prev_hash does not match previous voucher"));
+                issues.push(format!(
+                    "{s}{number}: prev_hash does not match previous voucher"
+                ));
             }
             let lines = voucher_lines(&conn, *id)?;
             let (d, c) = lines.iter().fold((0, 0), |(d, c), l| (d + l.1, c + l.2));
             if d != c {
                 issues.push(format!("{s}{number}: entries do not balance"));
             }
-            let expect = canonical(prev_hash, ser, *number, compile, event, desc, cp, *corrects, &lines);
+            let expect = canonical(
+                prev_hash, ser, *number, compile, event, desc, cp, *corrects, &lines,
+            );
             if expect != *hash {
-                issues.push(format!("{s}{number}: hash mismatch, the voucher was altered"));
+                issues.push(format!(
+                    "{s}{number}: hash mismatch, the voucher was altered"
+                ));
             }
             prev = hash.clone();
         }
@@ -844,17 +1046,23 @@ pub async fn verify(State(st): State<Shared>) -> ApiResult {
     if triggers != 4 {
         issues.push("append-only triggers are missing".into());
     }
-    Ok(Json(json!({"ok": issues.is_empty(), "vouchers": total, "issues": issues})))
+    Ok(Json(
+        json!({"ok": issues.is_empty(), "vouchers": total, "issues": issues}),
+    ))
 }
 
 pub async fn audit_list(State(st): State<Shared>) -> ApiResult {
     let conn = st.conn.lock().unwrap();
     let rows: Vec<Value> = conn
-        .prepare("SELECT at, actor, action, object, detail FROM audit_log ORDER BY id DESC LIMIT 200")?
+        .prepare(
+            "SELECT at, actor, action, object, detail FROM audit_log ORDER BY id DESC LIMIT 200",
+        )?
         .query_map([], |r| {
-            Ok(json!({"at": r.get::<_, String>(0)?, "actor": r.get::<_, String>(1)?,
+            Ok(
+                json!({"at": r.get::<_, String>(0)?, "actor": r.get::<_, String>(1)?,
                       "action": r.get::<_, String>(2)?, "object": r.get::<_, String>(3)?,
-                      "detail": r.get::<_, String>(4)?}))
+                      "detail": r.get::<_, String>(4)?}),
+            )
         })?
         .filter_map(Result::ok)
         .collect();
@@ -863,13 +1071,20 @@ pub async fn audit_list(State(st): State<Shared>) -> ApiResult {
 
 /// SIE 4 export for one calendar year. The record layout follows the commonly documented
 /// SIE 4 format; it has not been checked against the official 4C specification.
-pub async fn export_sie(State(st): State<Shared>, Query(q): Query<Range>) -> Result<Response, ApiError> {
+pub async fn export_sie(
+    State(st): State<Shared>,
+    Query(q): Query<Range>,
+) -> Result<Response, ApiError> {
     let conn = st.conn.lock().unwrap();
     let year = q.year.unwrap_or_else(|| Utc::now().year());
     let (from, to) = (format!("{year}-01-01"), format!("{year}-12-31"));
     let compact = |d: &str| d.replace('-', "");
     let (name, org): (String, String) = conn
-        .query_row("SELECT name, org_number FROM company WHERE id = 1", [], |r| Ok((r.get(0)?, r.get(1)?)))
+        .query_row(
+            "SELECT name, org_number FROM company WHERE id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
         .unwrap_or_else(|_| ("Unnamed company".into(), String::new()));
     let mut out = String::new();
     out.push_str("#FLAGGA 0\r\n");
@@ -900,8 +1115,16 @@ pub async fn export_sie(State(st): State<Shared>, Query(q): Query<Range>) -> Res
         .filter_map(Result::ok)
         .collect();
     for (a, bal) in &sums {
-        let kind = accounts.iter().find(|x| x.0 == *a).map(|x| x.2.as_str()).unwrap_or("T");
-        let tag = if kind == "T" || kind == "S" { "#UB" } else { "#RES" };
+        let kind = accounts
+            .iter()
+            .find(|x| x.0 == *a)
+            .map(|x| x.2.as_str())
+            .unwrap_or("T");
+        let tag = if kind == "T" || kind == "S" {
+            "#UB"
+        } else {
+            "#RES"
+        };
         out.push_str(&format!("{tag} 0 {a} {}\r\n", format_amount(*bal)));
     }
     let vouchers: Vec<(i64, String, i64, String, String, String, String)> = conn
@@ -917,8 +1140,12 @@ pub async fn export_sie(State(st): State<Shared>, Query(q): Query<Range>) -> Res
     for (id, series, number, event, desc, compile, approver) in &vouchers {
         out.push_str(&format!(
             "#VER {} {} {} {} {} {}\r\n{{\r\n",
-            sie_quote(series), sie_quote(&number.to_string()), compact(event), sie_quote(desc),
-            compact(compile), sie_quote(approver)
+            sie_quote(series),
+            sie_quote(&number.to_string()),
+            compact(event),
+            sie_quote(desc),
+            compact(compile),
+            sie_quote(approver)
         ));
         for (a, d, c, _) in voucher_lines(&conn, *id)? {
             out.push_str(&format!("#TRANS {a} {{}} {}\r\n", format_amount(d - c)));
@@ -927,8 +1154,14 @@ pub async fn export_sie(State(st): State<Shared>, Query(q): Query<Range>) -> Res
     }
     Ok((
         [
-            (header::CONTENT_TYPE, "text/plain; charset=ibm437".to_string()),
-            (header::CONTENT_DISPOSITION, format!("attachment; filename=\"oas-{year}.se\"")),
+            (
+                header::CONTENT_TYPE,
+                "text/plain; charset=ibm437".to_string(),
+            ),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"oas-{year}.se\""),
+            ),
         ],
         to_cp437(&out),
     )

@@ -81,14 +81,20 @@ fn require_admin(actor: &Actor) -> Result<(), ApiError> {
     if actor.role == Role::Admin {
         Ok(())
     } else {
-        Err(ApiError::new(StatusCode::FORBIDDEN, "forbidden", "only an admin can issue or delete invoices"))
+        Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "only an admin can issue or delete invoices",
+        ))
     }
 }
 
 fn clean(s: &str, field: &str, max: usize) -> Result<String, ApiError> {
     let v = s.trim();
     if v.chars().count() > max || v.chars().any(|c| c.is_control() && c != '\n') {
-        return Err(ApiError::invalid(format!("{field} is too long or has control characters")));
+        return Err(ApiError::invalid(format!(
+            "{field} is too long or has control characters"
+        )));
     }
     Ok(v.to_string())
 }
@@ -124,7 +130,9 @@ pub async fn add_customer(
     }
     let country = b.country.as_deref().unwrap_or("SE").trim().to_uppercase();
     if country.len() != 2 || !country.chars().all(|c| c.is_ascii_alphabetic()) {
-        return Err(ApiError::invalid("country must be a two-letter code such as SE"));
+        return Err(ApiError::invalid(
+            "country must be a two-letter code such as SE",
+        ));
     }
     let org = clean(b.org_number.as_deref().unwrap_or(""), "org_number", 30)?;
     let vat = clean(b.vat_number.as_deref().unwrap_or(""), "vat_number", 30)?;
@@ -161,7 +169,8 @@ pub async fn list_customers(State(st): State<Shared>) -> ApiResult {
         .query_map([], |r| r.get(0))?
         .filter_map(Result::ok)
         .collect();
-    let list: Result<Vec<Value>, ApiError> = ids.into_iter().map(|id| customer_json(&conn, id)).collect();
+    let list: Result<Vec<Value>, ApiError> =
+        ids.into_iter().map(|id| customer_json(&conn, id)).collect();
     Ok(Json(json!({"customers": list?})))
 }
 
@@ -186,7 +195,10 @@ pub struct NewInvoice {
     lines: Vec<LineBody>,
 }
 
-fn default_dates(issue: &Option<String>, due_days: Option<i64>) -> Result<(String, String), ApiError> {
+fn default_dates(
+    issue: &Option<String>,
+    due_days: Option<i64>,
+) -> Result<(String, String), ApiError> {
     let issue_d = match issue.as_deref().filter(|s| !s.trim().is_empty()) {
         Some(s) => date(s, "issue_date")?,
         None => Utc::now().date_naive(),
@@ -195,15 +207,26 @@ fn default_dates(issue: &Option<String>, due_days: Option<i64>) -> Result<(Strin
     if !(0..=365).contains(&days) {
         return Err(ApiError::invalid("due_days must be between 0 and 365"));
     }
-    Ok((issue_d.to_string(), (issue_d + Duration::days(days)).to_string()))
+    Ok((
+        issue_d.to_string(),
+        (issue_d + Duration::days(days)).to_string(),
+    ))
 }
 
 fn check_customer(conn: &Connection, id: i64) -> Result<(), ApiError> {
-    let country: Option<String> = conn.query_row("SELECT country FROM customer WHERE id = ?1", params![id], |r| r.get(0)).ok();
+    let country: Option<String> = conn
+        .query_row(
+            "SELECT country FROM customer WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .ok();
     match country.as_deref() {
         None => Err(ApiError::invalid(format!("unknown customer {id}"))),
         Some("SE") => Ok(()),
-        Some(_) => Err(ApiError::invalid("only customers in Sweden are supported; EU and export invoices are not built yet")),
+        Some(_) => Err(ApiError::invalid(
+            "only customers in Sweden are supported; EU and export invoices are not built yet",
+        )),
     }
 }
 
@@ -229,7 +252,9 @@ fn insert_invoice(
     };
     let notes = clean(b.notes.as_deref().unwrap_or(""), "notes", 500)?;
     if b.lines.is_empty() || b.lines.len() > 100 {
-        return Err(ApiError::invalid("an invoice needs between 1 and 100 lines"));
+        return Err(ApiError::invalid(
+            "an invoice needs between 1 and 100 lines",
+        ));
     }
     let mut parsed = vec![];
     for l in &b.lines {
@@ -243,7 +268,12 @@ fn insert_invoice(
         }
         let unit_price = parse_amount(&l.unit_price).map_err(ApiError::invalid)?;
         let unit = clean(l.unit.as_deref().unwrap_or("st"), "unit", 12)?;
-        parsed.push((description, quantity, if unit.is_empty() { "st".into() } else { unit }, unit_price));
+        parsed.push((
+            description,
+            quantity,
+            if unit.is_empty() { "st".into() } else { unit },
+            unit_price,
+        ));
     }
     conn.execute(
         "INSERT INTO invoice(customer_id, issue_date, due_date, service_date, vat_rate, notes, created_by, created_at)
@@ -258,7 +288,10 @@ fn insert_invoice(
         )?;
     }
     for e in entry_ids {
-        conn.execute("INSERT INTO invoiced_entry(entry_id, invoice_id) VALUES (?1, ?2)", params![e, id])?;
+        conn.execute(
+            "INSERT INTO invoiced_entry(entry_id, invoice_id) VALUES (?1, ?2)",
+            params![e, id],
+        )?;
     }
     ledger::audit(conn, actor, "invoice.create", &id.to_string(), "")?;
     Ok(id)
@@ -299,23 +332,49 @@ pub async fn from_time(
     let mut conn = st.conn.lock().unwrap();
     let entries = crate::filtered(
         &conn,
-        &Filters { from: b.from.clone(), to: b.to.clone(), project: Some(b.project.clone()), activity: None },
+        &Filters {
+            from: b.from.clone(),
+            to: b.to.clone(),
+            project: Some(b.project.clone()),
+            activity: None,
+        },
     )?;
     let billed: std::collections::HashSet<i64> = conn
         .prepare("SELECT entry_id FROM invoiced_entry")?
         .query_map([], |r| r.get(0))?
         .filter_map(Result::ok)
         .collect();
-    let open: Vec<_> = entries.into_iter().filter(|e| !e.running && !billed.contains(&e.id)).collect();
+    let open: Vec<_> = entries
+        .into_iter()
+        .filter(|e| !e.running && !billed.contains(&e.id))
+        .collect();
     if open.is_empty() {
-        return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "no uninvoiced time for that project in that range"));
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            "no uninvoiced time for that project in that range",
+        ));
     }
     let project_name = open[0].project.clone();
     let (rate_type, rate): (String, Option<i64>) = conn
-        .query_row("SELECT rate_type, rate FROM project WHERE name = ?1", params![project_name], |r| Ok((r.get(0)?, r.get(1)?)))
+        .query_row(
+            "SELECT rate_type, rate FROM project WHERE name = ?1",
+            params![project_name],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
         .map_err(|_| ApiError::invalid("unknown project"))?;
-    let first = open.iter().map(|e| e.date.as_str()).min().unwrap_or("").to_string();
-    let last = open.iter().map(|e| e.date.as_str()).max().unwrap_or("").to_string();
+    let first = open
+        .iter()
+        .map(|e| e.date.as_str())
+        .min()
+        .unwrap_or("")
+        .to_string();
+    let last = open
+        .iter()
+        .map(|e| e.date.as_str())
+        .max()
+        .unwrap_or("")
+        .to_string();
     let hours: f64 = open.iter().map(|e| e.hours).sum();
     let line = match (rate_type.as_str(), rate) {
         ("hourly", Some(r)) => LineBody {
@@ -330,7 +389,11 @@ pub async fn from_time(
             unit: Some("st".into()),
             unit_price: format_amount(r),
         },
-        _ => return Err(ApiError::invalid(format!("project {project_name} has no hourly rate or fixed fee; set one first"))),
+        _ => {
+            return Err(ApiError::invalid(format!(
+                "project {project_name} has no hourly rate or fixed fee; set one first"
+            )));
+        }
     };
     let ids: Vec<i64> = open.iter().map(|e| e.id).collect();
     let new = NewInvoice {
@@ -338,7 +401,11 @@ pub async fn from_time(
         vat_rate: b.vat_rate,
         issue_date: b.issue_date.clone(),
         due_days: b.due_days,
-        service_date: if first == last { Some(first.clone()) } else { None },
+        service_date: if first == last {
+            Some(first.clone())
+        } else {
+            None
+        },
         notes: b.notes.clone(),
         lines: vec![line],
     };
@@ -358,7 +425,11 @@ fn totals(lines: &[(String, i64, String, i64)], vat_rate: i64) -> Totals {
     let net: i64 = lines.iter().map(|l| line_net(l.1, l.3)).sum();
     let vat = (net as i128 * vat_rate as i128 + 50) / 100;
     // Whole öre; Swedish invoices commonly round the total to kronor, which is not done here.
-    Totals { net, vat: vat as i64, gross: net + vat as i64 }
+    Totals {
+        net,
+        vat: vat as i64,
+        gross: net + vat as i64,
+    }
 }
 
 fn invoice_json(conn: &Connection, id: i64) -> Result<Value, ApiError> {
@@ -377,7 +448,11 @@ fn invoice_json(conn: &Connection, id: i64) -> Result<Value, ApiError> {
         .filter_map(Result::ok)
         .collect();
     let t = totals(&lines, vat_rate);
-    let entries: i64 = conn.query_row("SELECT COUNT(*) FROM invoiced_entry WHERE invoice_id = ?1", params![id], |r| r.get(0))?;
+    let entries: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM invoiced_entry WHERE invoice_id = ?1",
+        params![id],
+        |r| r.get(0),
+    )?;
     Ok(json!({
         "id": id,
         "label": number.map(|n| format!("{series}{n}")),
@@ -400,7 +475,8 @@ pub async fn list_invoices(State(st): State<Shared>) -> ApiResult {
         .query_map([], |r| r.get(0))?
         .filter_map(Result::ok)
         .collect();
-    let list: Result<Vec<Value>, ApiError> = ids.into_iter().map(|id| invoice_json(&conn, id)).collect();
+    let list: Result<Vec<Value>, ApiError> =
+        ids.into_iter().map(|id| invoice_json(&conn, id)).collect();
     Ok(Json(json!({"invoices": list?})))
 }
 
@@ -409,14 +485,36 @@ pub async fn get_invoice(State(st): State<Shared>, Path(id): Path<i64>) -> ApiRe
     Ok(Json(json!({"invoice": invoice_json(&conn, id)?})))
 }
 
-pub async fn delete_invoice(State(st): State<Shared>, Extension(actor): Extension<Actor>, Path(id): Path<i64>) -> ApiResult {
+pub async fn delete_invoice(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<i64>,
+) -> ApiResult {
     require_admin(&actor)?;
     let conn = st.conn.lock().unwrap();
-    let status: Option<String> = conn.query_row("SELECT status FROM invoice WHERE id = ?1", params![id], |r| r.get(0)).ok();
+    let status: Option<String> = conn
+        .query_row(
+            "SELECT status FROM invoice WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .ok();
     match status.as_deref() {
-        None => return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such invoice")),
+        None => {
+            return Err(ApiError::new(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "no such invoice",
+            ));
+        }
         Some("draft") => {}
-        Some(_) => return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "an issued invoice cannot be deleted")),
+        Some(_) => {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "conflict",
+                "an issued invoice cannot be deleted",
+            ));
+        }
     }
     conn.execute("DELETE FROM invoice WHERE id = ?1", params![id])?;
     ledger::audit(&conn, &actor, "invoice.delete", &id.to_string(), "")?;
@@ -441,8 +539,19 @@ fn seller(conn: &Connection) -> Result<Seller, ApiError> {
         )
         .map_err(|_| ApiError::invalid("set the company details first (oas company set ...)"))?;
     let digits: String = row.1.chars().filter(|c| c.is_ascii_digit()).collect();
-    let vat_number = if row.3.trim().is_empty() && digits.len() == 10 { format!("SE{digits}01") } else { row.3.clone() };
-    Ok(Seller { name: row.0, org: row.1, address: row.2, vat_number, payment: row.4, f_skatt: row.5 != 0 })
+    let vat_number = if row.3.trim().is_empty() && digits.len() == 10 {
+        format!("SE{digits}01")
+    } else {
+        row.3.clone()
+    };
+    Ok(Seller {
+        name: row.0,
+        org: row.1,
+        address: row.2,
+        vat_number,
+        payment: row.4,
+        f_skatt: row.5 != 0,
+    })
 }
 
 /// What a full invoice still lacks, per Skatteverket's list. Empty means it can be issued.
@@ -456,7 +565,10 @@ fn missing(conn: &Connection, id: i64) -> Result<Vec<String>, ApiError> {
         out.push("the company address (oas company set --address ...)".into());
     }
     if s.vat_number.trim().is_empty() {
-        out.push("the company VAT number (derived from the organisation number when that has 10 digits)".into());
+        out.push(
+            "the company VAT number (derived from the organisation number when that has 10 digits)"
+                .into(),
+        );
     }
     let (cust, addr): (String, String) = conn.query_row(
         "SELECT c.name, c.address FROM invoice i JOIN customer c ON c.id = i.customer_id WHERE i.id = ?1",
@@ -471,18 +583,33 @@ fn missing(conn: &Connection, id: i64) -> Result<Vec<String>, ApiError> {
 
 /// Issue an invoice: assign the next number in the series, lock it, and propose a ledger voucher
 /// (debit accounts receivable, credit sales and output VAT) for an admin to approve.
-pub async fn issue_invoice(State(st): State<Shared>, Extension(actor): Extension<Actor>, Path(id): Path<i64>) -> ApiResult {
+pub async fn issue_invoice(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<i64>,
+) -> ApiResult {
     require_admin(&actor)?;
     let mut conn = st.conn.lock().unwrap();
     let (status, vat_rate, issue_date, customer_id): (String, i64, String, i64) = conn
-        .query_row("SELECT status, vat_rate, issue_date, customer_id FROM invoice WHERE id = ?1", params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        .query_row(
+            "SELECT status, vat_rate, issue_date, customer_id FROM invoice WHERE id = ?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
         .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such invoice"))?;
     if status != "draft" {
-        return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "this invoice is already issued"));
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            "this invoice is already issued",
+        ));
     }
     let gaps = missing(&conn, id)?;
     if !gaps.is_empty() {
-        return Err(ApiError::invalid(format!("the invoice is missing: {}", gaps.join("; "))));
+        return Err(ApiError::invalid(format!(
+            "the invoice is missing: {}",
+            gaps.join("; ")
+        )));
     }
     let lines: Vec<(String, i64, String, i64)> = conn
         .prepare("SELECT description, quantity, unit, unit_price FROM invoice_line WHERE invoice_id = ?1")?
@@ -490,21 +617,44 @@ pub async fn issue_invoice(State(st): State<Shared>, Extension(actor): Extension
         .filter_map(Result::ok)
         .collect();
     let t = totals(&lines, vat_rate);
-    let customer: String = conn.query_row("SELECT name FROM customer WHERE id = ?1", params![customer_id], |r| r.get(0))?;
+    let customer: String = conn.query_row(
+        "SELECT name FROM customer WHERE id = ?1",
+        params![customer_id],
+        |r| r.get(0),
+    )?;
     let (income, vat_acct, code) = match vat_rate {
         25 => (3041, 2611, "S25"),
         12 => (3042, 2621, "S12"),
         _ => (3043, 2631, "S6"),
     };
-    let number: i64 = conn.query_row("SELECT COALESCE(MAX(number), 0) + 1 FROM invoice WHERE series = 'F'", [], |r| r.get(0))?;
+    let number: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(number), 0) + 1 FROM invoice WHERE series = 'F'",
+        [],
+        |r| r.get(0),
+    )?;
     let nd = NewDraft {
         event_date: issue_date,
         description: format!("Faktura F{number} {customer}"),
         counterparty: Some(customer),
         lines: vec![
-            LineIn { account: 1510, debit: Some(format_amount(t.gross)), credit: None, vat_code: None },
-            LineIn { account: income, debit: None, credit: Some(format_amount(t.net)), vat_code: Some(code.into()) },
-            LineIn { account: vat_acct, debit: None, credit: Some(format_amount(t.vat)), vat_code: None },
+            LineIn {
+                account: 1510,
+                debit: Some(format_amount(t.gross)),
+                credit: None,
+                vat_code: None,
+            },
+            LineIn {
+                account: income,
+                debit: None,
+                credit: Some(format_amount(t.net)),
+                vat_code: Some(code.into()),
+            },
+            LineIn {
+                account: vat_acct,
+                debit: None,
+                credit: Some(format_amount(t.vat)),
+                vat_code: None,
+            },
         ],
         documents: vec![],
         bank_transaction_id: None,
@@ -514,12 +664,24 @@ pub async fn issue_invoice(State(st): State<Shared>, Extension(actor): Extension
         "UPDATE invoice SET status = 'issued', number = ?1, issued_by = ?2, issued_at = ?3, ledger_draft_id = ?4 WHERE id = ?5",
         params![number, actor.name, utc_string(Utc::now()), draft_id, id],
     )?;
-    ledger::audit(&conn, &actor, "invoice.issue", &id.to_string(), &format!("F{number}"))?;
-    Ok(Json(json!({"invoice": invoice_json(&conn, id)?, "ledger_draft": ledger::draft_view(&conn, draft_id)?})))
+    ledger::audit(
+        &conn,
+        &actor,
+        "invoice.issue",
+        &id.to_string(),
+        &format!("F{number}"),
+    )?;
+    Ok(Json(
+        json!({"invoice": invoice_json(&conn, id)?, "ledger_draft": ledger::draft_view(&conn, draft_id)?}),
+    ))
 }
 
 fn esc(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&#39;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 fn multiline(s: &str) -> String {
@@ -527,13 +689,19 @@ fn multiline(s: &str) -> String {
 }
 
 /// A printable invoice page. Print it to PDF from the browser. Draft invoices carry a watermark.
-pub async fn invoice_html(State(st): State<Shared>, Path(id): Path<i64>) -> Result<Response, ApiError> {
+pub async fn invoice_html(
+    State(st): State<Shared>,
+    Path(id): Path<i64>,
+) -> Result<Response, ApiError> {
     let conn = st.conn.lock().unwrap();
     let inv = invoice_json(&conn, id)?;
     let s = seller(&conn)?;
     let c = &inv["customer"];
     let draft = inv["status"] == "draft";
-    let label = inv["label"].as_str().map(str::to_string).unwrap_or_else(|| "DRAFT".into());
+    let label = inv["label"]
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| "DRAFT".into());
     let currency = inv["currency"].as_str().unwrap_or("SEK");
     let mut rows = String::new();
     for l in inv["lines"].as_array().cloned().unwrap_or_default() {
@@ -547,7 +715,9 @@ pub async fn invoice_html(State(st): State<Shared>, Path(id): Path<i64>) -> Resu
         ));
     }
     let service = match inv["service_date"].as_str() {
-        Some(d) if Some(d) != inv["issue_date"].as_str() => format!("<div>Date of supply: {}</div>", esc(d)),
+        Some(d) if Some(d) != inv["issue_date"].as_str() => {
+            format!("<div>Date of supply: {}</div>", esc(d))
+        }
         _ => String::new(),
     };
     let html = format!(
@@ -587,8 +757,14 @@ table{{width:100%;border-collapse:collapse;margin:1.5rem 0}}th,td{{padding:.5rem
     );
     let mut res = html.into_response();
     let h = res.headers_mut();
-    h.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
+    h.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
     // The page is self-contained: no scripts, and nothing it shows can run code.
-    h.insert("content-security-policy", HeaderValue::from_static("default-src 'none'; style-src 'unsafe-inline'"));
+    h.insert(
+        "content-security-policy",
+        HeaderValue::from_static("default-src 'none'; style-src 'unsafe-inline'"),
+    );
     Ok(res)
 }

@@ -1,11 +1,26 @@
 import {
-  Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input, Label,
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Input,
+  Label,
 } from "@spacecorps/components/ui";
 import { toast } from "@spacecorps/components";
 import type { ReactNode } from "react";
 import { ApiError } from "./api";
 
-export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
+export function PageHeader({
+  title,
+  description,
+  actions,
+}: {
+  title: string;
+  description?: string;
+  actions?: ReactNode;
+}) {
   return (
     <div className="oas-page-header">
       <div>
@@ -17,7 +32,17 @@ export function PageHeader({ title, description, actions }: { title: string; des
   );
 }
 
-export function Kpi({ label, value, hint, badge }: { label: string; value: ReactNode; hint?: string; badge?: ReactNode }) {
+export function Kpi({
+  label,
+  value,
+  hint,
+  badge,
+}: {
+  label: string;
+  value: ReactNode;
+  hint?: string;
+  badge?: ReactNode;
+}) {
   return (
     <Card>
       <CardHeader>
@@ -25,13 +50,26 @@ export function Kpi({ label, value, hint, badge }: { label: string; value: React
         <CardTitle className="oas-kpi-value">{value}</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="oas-muted oas-kpi-hint">{badge}{hint}</div>
+        <div className="oas-muted oas-kpi-hint">
+          {badge}
+          {hint}
+        </div>
       </CardContent>
     </Card>
   );
 }
 
-export function Section({ title, description, actions, children }: { title: string; description?: string; actions?: ReactNode; children: ReactNode }) {
+export function Section({
+  title,
+  description,
+  actions,
+  children,
+}: {
+  title: string;
+  description?: string;
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <Card>
       <CardHeader>
@@ -48,7 +86,15 @@ export function Section({ title, description, actions, children }: { title: stri
   );
 }
 
-export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
+export function Field({
+  label,
+  children,
+  hint,
+}: {
+  label: string;
+  children: ReactNode;
+  hint?: string;
+}) {
   return (
     <div className="oas-field">
       <Label>{label}</Label>
@@ -58,7 +104,15 @@ export function Field({ label, children, hint }: { label: string; children: Reac
   );
 }
 
-export function TextField(props: { label: string; value: string; onChange: (v: string) => void; type?: string; placeholder?: string; hint?: string; autoComplete?: string }) {
+export function TextField(props: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  type?: string;
+  placeholder?: string;
+  hint?: string;
+  autoComplete?: string;
+}) {
   return (
     <Field label={props.label} hint={props.hint}>
       <Input
@@ -94,8 +148,14 @@ export const money = (s: string) => s;
 export const hoursText = (h: number) => `${h.toFixed(2)} h`;
 
 import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
-  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
 } from "@spacecorps/components/ui";
 
 export function ConfirmDialog(props: {
@@ -122,19 +182,40 @@ export function ConfirmDialog(props: {
   );
 }
 
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@spacecorps/components/ui";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@spacecorps/components/ui";
 
-export interface VatCode { code: string; label: string; base_box: string | null }
+export interface VatCode {
+  code: string;
+  label: string;
+  base_box: string | null;
+}
 
 /** Optional VAT code for the net line of a voucher. An empty value means no code. */
-export function VatCodeSelect(props: { value: string; onChange: (v: string) => void; codes: VatCode[] }) {
+export function VatCodeSelect(props: {
+  value: string;
+  onChange: (v: string) => void;
+  codes: VatCode[];
+}) {
   return (
-    <Select value={props.value || "none"} onValueChange={(v) => props.onChange(v === "none" ? "" : v)}>
-      <SelectTrigger aria-label="VAT code"><SelectValue placeholder="VAT code" /></SelectTrigger>
+    <Select
+      value={props.value || "none"}
+      onValueChange={(v) => props.onChange(v === "none" ? "" : v)}
+    >
+      <SelectTrigger aria-label="VAT code">
+        <SelectValue placeholder="VAT code" />
+      </SelectTrigger>
       <SelectContent>
         <SelectItem value="none">No VAT code</SelectItem>
         {props.codes.map((c) => (
-          <SelectItem key={c.code} value={c.code}>{c.code}: {c.label}</SelectItem>
+          <SelectItem key={c.code} value={c.code}>
+            {c.code}: {c.label}
+          </SelectItem>
         ))}
       </SelectContent>
     </Select>

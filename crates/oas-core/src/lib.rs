@@ -117,7 +117,8 @@ pub fn match_project(projects: &[Project], query: &str) -> Match {
 }
 
 pub fn parse_tz(name: &str) -> Result<Tz, String> {
-    name.parse::<Tz>().map_err(|_| format!("unknown timezone '{name}'"))
+    name.parse::<Tz>()
+        .map_err(|_| format!("unknown timezone '{name}'"))
 }
 
 /// Parse a local date (YYYY-MM-DD) and time (HH:MM) in a timezone into UTC.
@@ -156,13 +157,20 @@ pub fn csv_field(value: &str) -> String {
 }
 
 pub fn csv_row(fields: &[String]) -> String {
-    fields.iter().map(|f| csv_field(f)).collect::<Vec<_>>().join(",")
+    fields
+        .iter()
+        .map(|f| csv_field(f))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// Parse a decimal amount such as "1250", "1250.5" or "1 250,50" into öre.
 /// Negative numbers and more than two decimals are rejected.
 pub fn parse_amount(input: &str) -> Result<i64, String> {
-    let s: String = input.chars().filter(|c| !c.is_whitespace() && *c != '_').collect();
+    let s: String = input
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '_')
+        .collect();
     let s = s.replace(',', ".");
     if s.is_empty() {
         return Err("amount is empty".into());
@@ -177,9 +185,15 @@ pub fn parse_amount(input: &str) -> Result<i64, String> {
         || frac.len() > 2
         || whole.len() > 12
     {
-        return Err(format!("invalid amount '{input}': use digits with at most 2 decimals"));
+        return Err(format!(
+            "invalid amount '{input}': use digits with at most 2 decimals"
+        ));
     }
-    let w: i64 = if whole.is_empty() { 0 } else { whole.parse().map_err(|_| "amount too large")? };
+    let w: i64 = if whole.is_empty() {
+        0
+    } else {
+        whole.parse().map_err(|_| "amount too large")?
+    };
     let f: i64 = format!("{frac:0<2}").parse().unwrap_or(0);
     Ok(w * 100 + f)
 }
@@ -298,14 +312,44 @@ fn find_col(header: &[String], names: &[&str]) -> Option<usize> {
 pub fn parse_bank_csv(text: &str) -> Result<(Vec<BankRow>, Vec<String>), String> {
     let mut lines = text.lines().filter(|l| !l.trim().is_empty());
     let first = lines.next().ok_or("the file is empty")?;
-    let delim = if first.matches(';').count() > first.matches(',').count() { ';' } else { ',' };
+    let delim = if first.matches(';').count() > first.matches(',').count() {
+        ';'
+    } else {
+        ','
+    };
     let header = split_csv_line(first, delim);
-    let date_c = find_col(&header, &["date", "datum", "bokföringsdatum", "bokforingsdatum", "booking date", "transaction date", "transaktionsdatum"])
-        .ok_or("no date column found (expected date, datum or bokföringsdatum)")?;
+    let date_c = find_col(
+        &header,
+        &[
+            "date",
+            "datum",
+            "bokföringsdatum",
+            "bokforingsdatum",
+            "booking date",
+            "transaction date",
+            "transaktionsdatum",
+        ],
+    )
+    .ok_or("no date column found (expected date, datum or bokföringsdatum)")?;
     let amount_c = find_col(&header, &["amount", "belopp", "sum", "summa"])
         .ok_or("no amount column found (expected amount or belopp)")?;
-    let text_c = find_col(&header, &["counterparty", "text", "description", "beskrivning", "mottagare", "name", "namn", "merchant"]);
-    let ref_c = find_col(&header, &["reference", "referens", "message", "meddelande", "note"]);
+    let text_c = find_col(
+        &header,
+        &[
+            "counterparty",
+            "text",
+            "description",
+            "beskrivning",
+            "mottagare",
+            "name",
+            "namn",
+            "merchant",
+        ],
+    );
+    let ref_c = find_col(
+        &header,
+        &["reference", "referens", "message", "meddelande", "note"],
+    );
     let cur_c = find_col(&header, &["currency", "valuta"]);
     let mut rows = vec![];
     let mut errors = vec![];
@@ -313,11 +357,19 @@ pub fn parse_bank_csv(text: &str) -> Result<(Vec<BankRow>, Vec<String>), String>
         let f = split_csv_line(line, delim);
         let get = |i: Option<usize>| i.and_then(|i| f.get(i)).cloned().unwrap_or_default();
         let Some(date) = normalise_date(&get(Some(date_c))) else {
-            errors.push(format!("row {}: unreadable date '{}'", n + 2, get(Some(date_c))));
+            errors.push(format!(
+                "row {}: unreadable date '{}'",
+                n + 2,
+                get(Some(date_c))
+            ));
             continue;
         };
         let Ok(amount) = parse_signed_amount(&get(Some(amount_c))) else {
-            errors.push(format!("row {}: unreadable amount '{}'", n + 2, get(Some(amount_c))));
+            errors.push(format!(
+                "row {}: unreadable amount '{}'",
+                n + 2,
+                get(Some(amount_c))
+            ));
             continue;
         };
         let currency = {
@@ -363,7 +415,13 @@ pub fn name_score(vendor: &str, bank_text: &str) -> f64 {
     if a.is_empty() || b.is_empty() {
         return 0.0;
     }
-    let shared = a.iter().filter(|t| b.iter().any(|u| u == *t || u.contains(t.as_str()) || t.contains(u.as_str()))).count();
+    let shared = a
+        .iter()
+        .filter(|t| {
+            b.iter()
+                .any(|u| u == *t || u.contains(t.as_str()) || t.contains(u.as_str()))
+        })
+        .count();
     (shared as f64 / a.len().min(b.len()) as f64).min(1.0)
 }
 
@@ -417,11 +475,21 @@ pub fn score_match(
     if amount == 0.0 {
         return None;
     }
-    let currency = if tx_currency.eq_ignore_ascii_case(doc_currency) { 1.0 } else { 0.3 };
+    let currency = if tx_currency.eq_ignore_ascii_case(doc_currency) {
+        1.0
+    } else {
+        0.3
+    };
     let date = doc_date.map(|d| date_score(tx_date, d)).unwrap_or(0.4);
     let name = name_score(doc_vendor, tx_text);
     let total = 0.45 * amount + 0.25 * name + 0.2 * date + 0.1 * currency;
-    Some(MatchScores { total, name, amount, date, currency })
+    Some(MatchScores {
+        total,
+        name,
+        amount,
+        date,
+        currency,
+    })
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -431,13 +499,22 @@ pub fn score_match(
 /// Validate a 12-digit Swedish personnummer or samordningsnummer (YYYYMMDDNNNC, hyphen optional)
 /// with the Luhn check on the last ten digits. Returns the 12 digits and the birth year.
 pub fn parse_personnummer(input: &str) -> Result<(String, i32), String> {
-    let digits: String = input.chars().filter(|c| !matches!(c, '-' | ' ' | '+')).collect();
+    let digits: String = input
+        .chars()
+        .filter(|c| !matches!(c, '-' | ' ' | '+'))
+        .collect();
     if digits.len() != 12 || !digits.chars().all(|c| c.is_ascii_digit()) {
         return Err("identity must be 12 digits: YYYYMMDDNNNC".into());
     }
-    let year: i32 = digits[..4].parse().map_err(|_| "invalid year".to_string())?;
-    let month: u32 = digits[4..6].parse().map_err(|_| "invalid month".to_string())?;
-    let mut day: u32 = digits[6..8].parse().map_err(|_| "invalid day".to_string())?;
+    let year: i32 = digits[..4]
+        .parse()
+        .map_err(|_| "invalid year".to_string())?;
+    let month: u32 = digits[4..6]
+        .parse()
+        .map_err(|_| "invalid month".to_string())?;
+    let mut day: u32 = digits[6..8]
+        .parse()
+        .map_err(|_| "invalid day".to_string())?;
     if day > 60 {
         day -= 60; // samordningsnummer
     }
@@ -477,7 +554,12 @@ pub struct ContribRates {
 
 /// Employer contribution in öre for one employee and month, rounded to whole kronor, plus a
 /// plain-language note on which rate applied. Benefit and special cases are not covered.
-pub fn employer_contribution(base: i64, birth_year: i32, period: &str, r: &ContribRates) -> (i64, String) {
+pub fn employer_contribution(
+    base: i64,
+    birth_year: i32,
+    period: &str,
+    r: &ContribRates,
+) -> (i64, String) {
     if base <= 0 {
         return (0, "no pay".into());
     }
@@ -491,13 +573,28 @@ pub fn employer_contribution(base: i64, birth_year: i32, period: &str, r: &Contr
             let low = base.min(r.youth_cap);
             let high = base - low;
             let c = low as f64 * r.youth / 100.0 + high as f64 * r.standard / 100.0;
-            return (whole_kr(c), format!("youth rate {}% up to the monthly cap, {}% above", r.youth, r.standard));
+            return (
+                whole_kr(c),
+                format!(
+                    "youth rate {}% up to the monthly cap, {}% above",
+                    r.youth, r.standard
+                ),
+            );
         }
-        (whole_kr(base as f64 * r.standard / 100.0), format!("standard rate {}%", r.standard))
+        (
+            whole_kr(base as f64 * r.standard / 100.0),
+            format!("standard rate {}%", r.standard),
+        )
     } else if birth_year >= 1938 {
-        (whole_kr(base as f64 * r.senior / 100.0), format!("reduced rate {}% (born 1938-1958)", r.senior))
+        (
+            whole_kr(base as f64 * r.senior / 100.0),
+            format!("reduced rate {}% (born 1938-1958)", r.senior),
+        )
     } else {
-        (whole_kr(base as f64 * r.over79 / 100.0), format!("rate {}% (born 1937 or earlier)", r.over79))
+        (
+            whole_kr(base as f64 * r.over79 / 100.0),
+            format!("rate {}% (born 1937 or earlier)", r.over79),
+        )
     }
 }
 
@@ -628,11 +725,43 @@ mod tests {
 
     #[test]
     fn matching_prefers_same_amount_name_and_date() {
-        let good = score_match(-125000, "SEK", "2026-10-21", "AMAZON WEB SERVICES EMEA", Some(125000), "SEK", Some("2026-10-20"), "Amazon Web Services").unwrap();
-        let weak = score_match(-125000, "SEK", "2026-10-21", "SPOTIFY", Some(125000), "SEK", Some("2026-09-01"), "Telia").unwrap();
+        let good = score_match(
+            -125000,
+            "SEK",
+            "2026-10-21",
+            "AMAZON WEB SERVICES EMEA",
+            Some(125000),
+            "SEK",
+            Some("2026-10-20"),
+            "Amazon Web Services",
+        )
+        .unwrap();
+        let weak = score_match(
+            -125000,
+            "SEK",
+            "2026-10-21",
+            "SPOTIFY",
+            Some(125000),
+            "SEK",
+            Some("2026-09-01"),
+            "Telia",
+        )
+        .unwrap();
         assert!(good.total > 0.9, "{good:?}");
         assert!(weak.total < good.total);
-        assert!(score_match(-125000, "SEK", "2026-10-21", "x", Some(50000), "SEK", None, "x").is_none());
+        assert!(
+            score_match(
+                -125000,
+                "SEK",
+                "2026-10-21",
+                "x",
+                Some(50000),
+                "SEK",
+                None,
+                "x"
+            )
+            .is_none()
+        );
         assert!(score_match(-125000, "SEK", "2026-10-21", "x", None, "SEK", None, "x").is_none());
     }
 
@@ -656,9 +785,15 @@ mod tests {
 
     fn rates() -> ContribRates {
         ContribRates {
-            standard: 31.42, senior: 10.21, over79: 0.0, youth: 20.81, youth_cap: 2_500_000,
-            youth_from_birth: 2003, youth_to_birth: 2007,
-            youth_start: "2026-04".into(), youth_end: "2027-09".into(),
+            standard: 31.42,
+            senior: 10.21,
+            over79: 0.0,
+            youth: 20.81,
+            youth_cap: 2_500_000,
+            youth_from_birth: 2003,
+            youth_to_birth: 2007,
+            youth_start: "2026-04".into(),
+            youth_end: "2027-09".into(),
         }
     }
 
@@ -666,9 +801,15 @@ mod tests {
     fn contributions_by_age_class() {
         let r = rates();
         // 50 000 kr in a month, born 1985: 31.42% = 15 710 kr
-        assert_eq!(employer_contribution(5_000_000, 1985, "2026-10", &r).0, 1_571_000);
+        assert_eq!(
+            employer_contribution(5_000_000, 1985, "2026-10", &r).0,
+            1_571_000
+        );
         // born 1950: 10.21% of 50 000 = 5 105 kr
-        assert_eq!(employer_contribution(5_000_000, 1950, "2026-10", &r).0, 510_500);
+        assert_eq!(
+            employer_contribution(5_000_000, 1950, "2026-10", &r).0,
+            510_500
+        );
         // born 1930: nothing
         assert_eq!(employer_contribution(5_000_000, 1930, "2026-10", &r).0, 0);
         assert_eq!(employer_contribution(0, 1985, "2026-10", &r).0, 0);
@@ -681,8 +822,14 @@ mod tests {
         let (c, note) = employer_contribution(3_000_000, 2004, "2026-10", &r);
         assert_eq!(c, 677_400, "{note}");
         // before the window starts the standard rate applies: 30 000 * 31.42% = 9 426
-        assert_eq!(employer_contribution(3_000_000, 2004, "2026-03", &r).0, 942_600);
+        assert_eq!(
+            employer_contribution(3_000_000, 2004, "2026-03", &r).0,
+            942_600
+        );
         // outside the birth years
-        assert_eq!(employer_contribution(3_000_000, 1990, "2026-10", &r).0, 942_600);
+        assert_eq!(
+            employer_contribution(3_000_000, 1990, "2026-10", &r).0,
+            942_600
+        );
     }
 }

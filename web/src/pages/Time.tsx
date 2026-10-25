@@ -1,13 +1,50 @@
 import {
-  Badge, Button, DataTable, Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader,
-  DialogTitle, Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Tabs,
-  TabsContent, TabsList, TabsTrigger, type DataTableColumn,
+  Badge,
+  Button,
+  DataTable,
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+  type DataTableColumn,
 } from "@spacecorps/components/ui";
 import { Banknote, Download, Pencil, Play, Plus, Square } from "lucide-react";
 import { useState } from "react";
-import { ApiError, api, download, type Activity, type Me, type Project, type Report, type TimeEntry } from "../api";
+import {
+  ApiError,
+  api,
+  download,
+  type Activity,
+  type Me,
+  type Project,
+  type Report,
+  type TimeEntry,
+} from "../api";
 import { monthStart, today, useData } from "../hooks";
-import { EmptyNote, Field, Kpi, PageHeader, Section, TextField, hoursText, notifyError, notifyOk } from "../kit";
+import {
+  EmptyNote,
+  Field,
+  Kpi,
+  PageHeader,
+  Section,
+  TextField,
+  hoursText,
+  notifyError,
+  notifyOk,
+} from "../kit";
 import { entryColumns } from "./shared";
 
 function LogTimeDialog(props: {
@@ -40,7 +77,10 @@ function LogTimeDialog(props: {
       };
       if (props.mode === "log") Object.assign(body, { date, from, to });
       await api(props.mode === "log" ? "/time" : "/time/start", { method: "POST", body });
-      notifyOk(props.mode === "log" ? "Time logged" : "Timer started", `${activity}, ${projectName}`);
+      notifyOk(
+        props.mode === "log" ? "Time logged" : "Timer started",
+        `${activity}, ${projectName}`,
+      );
       setSuggest(null);
       setMessage("");
       props.onOpenChange(false);
@@ -64,51 +104,91 @@ function LogTimeDialog(props: {
         <DialogHeader>
           <DialogTitle>{props.mode === "log" ? "Log time" : "Start timer"}</DialogTitle>
           <DialogDescription>
-            {props.mode === "log" ? "Add a finished block of work." : "The timer runs until you stop it."} Times are in Europe/Stockholm.
+            {props.mode === "log"
+              ? "Add a finished block of work."
+              : "The timer runs until you stop it."}{" "}
+            Times are in Europe/Stockholm.
           </DialogDescription>
         </DialogHeader>
-<DialogBody>
-        <div className="oas-form">
-          <div className="oas-form-row">
-            <Field label="Activity">
-              <Select value={activity} onValueChange={setActivity}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {props.activities.map((a) => <SelectItem key={a.name} value={a.name}>{a.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label="Project" hint="Type a name; unknown names offer to create a project.">
-              <Input list="oas-projects" value={project} onChange={(e) => { setProject(e.target.value); setSuggest(null); }} placeholder="Project" />
-              <datalist id="oas-projects">
-                {props.projects.filter((p) => !p.archived).map((p) => <option key={p.id} value={p.name} />)}
-              </datalist>
-            </Field>
-          </div>
-          {props.mode === "log" ? (
+        <DialogBody>
+          <div className="oas-form">
             <div className="oas-form-row">
-              <TextField label="Date" type="date" value={date} onChange={setDate} />
-              <TextField label="From" type="time" value={from} onChange={setFrom} />
-              <TextField label="To" type="time" value={to} onChange={setTo} />
+              <Field label="Activity">
+                <Select value={activity} onValueChange={setActivity}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {props.activities.map((a) => (
+                      <SelectItem key={a.name} value={a.name}>
+                        {a.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label="Project" hint="Type a name; unknown names offer to create a project.">
+                <Input
+                  list="oas-projects"
+                  value={project}
+                  onChange={(e) => {
+                    setProject(e.target.value);
+                    setSuggest(null);
+                  }}
+                  placeholder="Project"
+                />
+                <datalist id="oas-projects">
+                  {props.projects
+                    .filter((p) => !p.archived)
+                    .map((p) => (
+                      <option key={p.id} value={p.name} />
+                    ))}
+                </datalist>
+              </Field>
             </div>
-          ) : null}
-          <TextField label="Message" value={message} onChange={setMessage} placeholder="Optional, defaults to the activity template" />
-          {suggest ? (
-            <div className="oas-banner">
-              <span>No project named "{suggest.typed}".</span>
-              <span className="oas-actions">
-                {suggest.options.map((o) => (
-                  <Button key={o} size="sm" variant="outline" onClick={() => { setProject(o); void submit(o, false); }}>Use {o}</Button>
-                ))}
-                <Button size="sm" onClick={() => void submit(suggest.typed, true)}>Create "{suggest.typed}"</Button>
-              </span>
-            </div>
-          ) : null}
-          {error ? <p className="oas-error">{error}</p> : null}
-        </div>
-</DialogBody>
-<DialogFooter>
-          <Button variant="outline" onClick={() => props.onOpenChange(false)}>Cancel</Button>
+            {props.mode === "log" ? (
+              <div className="oas-form-row">
+                <TextField label="Date" type="date" value={date} onChange={setDate} />
+                <TextField label="From" type="time" value={from} onChange={setFrom} />
+                <TextField label="To" type="time" value={to} onChange={setTo} />
+              </div>
+            ) : null}
+            <TextField
+              label="Message"
+              value={message}
+              onChange={setMessage}
+              placeholder="Optional, defaults to the activity template"
+            />
+            {suggest ? (
+              <div className="oas-banner">
+                <span>No project named "{suggest.typed}".</span>
+                <span className="oas-actions">
+                  {suggest.options.map((o) => (
+                    <Button
+                      key={o}
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setProject(o);
+                        void submit(o, false);
+                      }}
+                    >
+                      Use {o}
+                    </Button>
+                  ))}
+                  <Button size="sm" onClick={() => void submit(suggest.typed, true)}>
+                    Create "{suggest.typed}"
+                  </Button>
+                </span>
+              </div>
+            ) : null}
+            {error ? <p className="oas-error">{error}</p> : null}
+          </div>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => props.onOpenChange(false)}>
+            Cancel
+          </Button>
           <Button disabled={busy || !project.trim()} onClick={() => void submit(project, false)}>
             {props.mode === "log" ? "Log time" : "Start"}
           </Button>
@@ -125,14 +205,20 @@ function rateText(p: Project) {
 }
 
 function RateFields(props: {
-  type: string; amount: string; currency: string;
-  onType: (v: string) => void; onAmount: (v: string) => void; onCurrency: (v: string) => void;
+  type: string;
+  amount: string;
+  currency: string;
+  onType: (v: string) => void;
+  onAmount: (v: string) => void;
+  onCurrency: (v: string) => void;
 }) {
   return (
     <>
       <Field label="Pricing">
         <Select value={props.type} onValueChange={props.onType}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
           <SelectContent>
             <SelectItem value="none">No rate</SelectItem>
             <SelectItem value="hourly">Hourly rate</SelectItem>
@@ -142,7 +228,12 @@ function RateFields(props: {
       </Field>
       {props.type !== "none" ? (
         <div className="oas-form-row">
-          <TextField label={props.type === "hourly" ? "Rate per hour" : "Fee"} value={props.amount} onChange={props.onAmount} placeholder="900.00" />
+          <TextField
+            label={props.type === "hourly" ? "Rate per hour" : "Fee"}
+            value={props.amount}
+            onChange={props.onAmount}
+            placeholder="900.00"
+          />
           <TextField label="Currency" value={props.currency} onChange={props.onCurrency} />
         </div>
       ) : null}
@@ -150,7 +241,17 @@ function RateFields(props: {
   );
 }
 
-function NewProjectDialog({ open, onOpenChange, onDone, canSetRate }: { open: boolean; onOpenChange: (o: boolean) => void; onDone: () => void; canSetRate: boolean }) {
+function NewProjectDialog({
+  open,
+  onOpenChange,
+  onDone,
+  canSetRate,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  onDone: () => void;
+  canSetRate: boolean;
+}) {
   const [name, setName] = useState("");
   const [client, setClient] = useState("");
   const [aliases, setAliases] = useState("");
@@ -162,12 +263,23 @@ function NewProjectDialog({ open, onOpenChange, onDone, canSetRate }: { open: bo
       await api("/projects", {
         method: "POST",
         body: {
-          name, client: client || null, aliases: aliases.split(",").map((a) => a.trim()).filter(Boolean),
-          rate_type: rateType, rate: rateType === "none" ? null : rate, currency,
+          name,
+          client: client || null,
+          aliases: aliases
+            .split(",")
+            .map((a) => a.trim())
+            .filter(Boolean),
+          rate_type: rateType,
+          rate: rateType === "none" ? null : rate,
+          currency,
         },
       });
       notifyOk("Project created", name);
-      setName(""); setClient(""); setAliases(""); setRateType("none"); setRate("");
+      setName("");
+      setClient("");
+      setAliases("");
+      setRateType("none");
+      setRate("");
       onOpenChange(false);
       onDone();
     } catch (e) {
@@ -177,22 +289,59 @@ function NewProjectDialog({ open, onOpenChange, onDone, canSetRate }: { open: bo
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogHeader><DialogTitle>New project</DialogTitle><DialogDescription>Aliases are other names that should match this project when you log time.</DialogDescription></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>New project</DialogTitle>
+          <DialogDescription>
+            Aliases are other names that should match this project when you log time.
+          </DialogDescription>
+        </DialogHeader>
         <DialogBody>
           <div className="oas-form">
             <TextField label="Name" value={name} onChange={setName} />
             <TextField label="Client" value={client} onChange={setClient} />
-            <TextField label="Aliases" value={aliases} onChange={setAliases} hint="Comma separated" />
-            {canSetRate ? <RateFields type={rateType} amount={rate} currency={currency} onType={setRateType} onAmount={setRate} onCurrency={setCurrency} /> : null}
+            <TextField
+              label="Aliases"
+              value={aliases}
+              onChange={setAliases}
+              hint="Comma separated"
+            />
+            {canSetRate ? (
+              <RateFields
+                type={rateType}
+                amount={rate}
+                currency={currency}
+                onType={setRateType}
+                onAmount={setRate}
+                onCurrency={setCurrency}
+              />
+            ) : null}
           </div>
         </DialogBody>
-        <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button><Button disabled={!name.trim() || (rateType !== "none" && !rate.trim())} onClick={() => void save()}>Create</Button></DialogFooter>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            disabled={!name.trim() || (rateType !== "none" && !rate.trim())}
+            onClick={() => void save()}
+          >
+            Create
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
-function RateDialog({ project, onClose, onDone }: { project: Project | null; onClose: () => void; onDone: () => void }) {
+function RateDialog({
+  project,
+  onClose,
+  onDone,
+}: {
+  project: Project | null;
+  onClose: () => void;
+  onDone: () => void;
+}) {
   const [type, setType] = useState("none");
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState("SEK");
@@ -206,7 +355,10 @@ function RateDialog({ project, onClose, onDone }: { project: Project | null; onC
   async function save() {
     if (!project) return;
     try {
-      await api(`/projects/${project.id}/rate`, { method: "POST", body: { rate_type: type, rate: type === "none" ? null : amount, currency } });
+      await api(`/projects/${project.id}/rate`, {
+        method: "POST",
+        body: { rate_type: type, rate: type === "none" ? null : amount, currency },
+      });
       notifyOk("Pricing saved", project.name);
       onClose();
       onDone();
@@ -217,19 +369,47 @@ function RateDialog({ project, onClose, onDone }: { project: Project | null; onC
   return (
     <Dialog open={project !== null} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Pricing for {project?.name}</DialogTitle><DialogDescription>An hourly rate multiplies tracked hours. A fixed fee counts once for the project. Changing it applies to all entries, including past ones.</DialogDescription></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>Pricing for {project?.name}</DialogTitle>
+          <DialogDescription>
+            An hourly rate multiplies tracked hours. A fixed fee counts once for the project.
+            Changing it applies to all entries, including past ones.
+          </DialogDescription>
+        </DialogHeader>
         <DialogBody>
           <div className="oas-form">
-            <RateFields type={type} amount={amount} currency={currency} onType={setType} onAmount={setAmount} onCurrency={setCurrency} />
+            <RateFields
+              type={type}
+              amount={amount}
+              currency={currency}
+              onType={setType}
+              onAmount={setAmount}
+              onCurrency={setCurrency}
+            />
           </div>
         </DialogBody>
-        <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button disabled={type !== "none" && !amount.trim()} onClick={() => void save()}>Save</Button></DialogFooter>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={type !== "none" && !amount.trim()} onClick={() => void save()}>
+            Save
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
-function EditMessageDialog({ entry, onClose, onDone }: { entry: TimeEntry | null; onClose: () => void; onDone: () => void }) {
+function EditMessageDialog({
+  entry,
+  onClose,
+  onDone,
+}: {
+  entry: TimeEntry | null;
+  onClose: () => void;
+  onDone: () => void;
+}) {
   const [message, setMessage] = useState("");
   const [loaded, setLoaded] = useState<number | null>(null);
   if (entry && loaded !== entry.id) {
@@ -250,24 +430,47 @@ function EditMessageDialog({ entry, onClose, onDone }: { entry: TimeEntry | null
   return (
     <Dialog open={entry !== null} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Edit message</DialogTitle><DialogDescription>{entry ? `${entry.date} ${entry.start}-${entry.end ?? "running"}, ${entry.project}, ${entry.activity}. Only the message changes.` : ""}</DialogDescription></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>Edit message</DialogTitle>
+          <DialogDescription>
+            {entry
+              ? `${entry.date} ${entry.start}-${entry.end ?? "running"}, ${entry.project}, ${entry.activity}. Only the message changes.`
+              : ""}
+          </DialogDescription>
+        </DialogHeader>
         <DialogBody>
-          <div className="oas-form"><TextField label="Message" value={message} onChange={setMessage} /></div>
+          <div className="oas-form">
+            <TextField label="Message" value={message} onChange={setMessage} />
+          </div>
         </DialogBody>
-        <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={() => void save()}>Save</Button></DialogFooter>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={() => void save()}>Save</Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
-function NewActivityDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenChange: (o: boolean) => void; onDone: () => void }) {
+function NewActivityDialog({
+  open,
+  onOpenChange,
+  onDone,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  onDone: () => void;
+}) {
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
   async function save() {
     try {
       await api("/activities", { method: "POST", body: { name, message } });
       notifyOk("Activity saved", name);
-      setName(""); setMessage("");
+      setName("");
+      setMessage("");
       onOpenChange(false);
       onDone();
     } catch (e) {
@@ -277,14 +480,37 @@ function NewActivityDialog({ open, onOpenChange, onDone }: { open: boolean; onOp
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Activity type</DialogTitle><DialogDescription>The message template pre-fills entries of this type. Saving an existing name updates its template.</DialogDescription></DialogHeader>
-<DialogBody>
-        <div className="oas-form">
-          <TextField label="Name" value={name} onChange={setName} placeholder="meeting, building, strategizing..." />
-          <TextField label="Message template" value={message} onChange={setMessage} placeholder="Meeting: {topic}" />
-        </div>
-</DialogBody>
-<DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button><Button disabled={!name.trim()} onClick={() => void save()}>Save</Button></DialogFooter>
+        <DialogHeader>
+          <DialogTitle>Activity type</DialogTitle>
+          <DialogDescription>
+            The message template pre-fills entries of this type. Saving an existing name updates its
+            template.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody>
+          <div className="oas-form">
+            <TextField
+              label="Name"
+              value={name}
+              onChange={setName}
+              placeholder="meeting, building, strategizing..."
+            />
+            <TextField
+              label="Message template"
+              value={message}
+              onChange={setMessage}
+              placeholder="Meeting: {topic}"
+            />
+          </div>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button disabled={!name.trim()} onClick={() => void save()}>
+            Save
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -312,7 +538,12 @@ export function TimePage({ me }: { me: Me }) {
   const activities = useData<{ activities: Activity[] }>("/activities");
   const running = (entries.data?.entries ?? []).find((e) => e.running);
 
-  const reloadAll = () => { entries.reload(); report.reload(); projects.reload(); activities.reload(); };
+  const reloadAll = () => {
+    entries.reload();
+    report.reload();
+    projects.reload();
+    activities.reload();
+  };
 
   async function stop() {
     try {
@@ -336,15 +567,45 @@ export function TimePage({ me }: { me: Me }) {
     { name: "name", header: "Project" },
     { name: "client", header: "Client", accessor: (p) => p.client ?? "" },
     { name: "aliases", header: "Aliases", accessor: (p) => p.aliases.join(", ") },
-    { name: "rate", header: "Pricing", accessor: (p) => rateText(p), cell: (v) => (v ? String(v) : <span className="oas-muted">none</span>) },
-    { name: "hours", header: "Hours (range)", align: "Right", accessor: (p) => report.data?.by_project[p.name] ?? 0, cell: (v) => (v as number).toFixed(2) },
-    { name: "amount", header: "Amount (range)", align: "Right", accessor: (p) => { const a = report.data?.amount_by_project[p.name]; return a ? `${a.amount} ${a.currency}` : ""; } },
-    { name: "archived", header: "Status", accessor: (p) => (p.archived ? "archived" : "active"), cell: (v) => <Badge variant={v === "active" ? "success" : "secondary"}>{v as string}</Badge> },
+    {
+      name: "rate",
+      header: "Pricing",
+      accessor: (p) => rateText(p),
+      cell: (v) => (v ? String(v) : <span className="oas-muted">none</span>),
+    },
+    {
+      name: "hours",
+      header: "Hours (range)",
+      align: "Right",
+      accessor: (p) => report.data?.by_project[p.name] ?? 0,
+      cell: (v) => (v as number).toFixed(2),
+    },
+    {
+      name: "amount",
+      header: "Amount (range)",
+      align: "Right",
+      accessor: (p) => {
+        const a = report.data?.amount_by_project[p.name];
+        return a ? `${a.amount} ${a.currency}` : "";
+      },
+    },
+    {
+      name: "archived",
+      header: "Status",
+      accessor: (p) => (p.archived ? "archived" : "active"),
+      cell: (v) => <Badge variant={v === "active" ? "success" : "secondary"}>{v as string}</Badge>,
+    },
   ];
   const activityColumns: DataTableColumn<Activity>[] = [
     { name: "name", header: "Activity" },
     { name: "message", header: "Message template" },
-    { name: "hours", header: "Hours (range)", align: "Right", accessor: (a) => report.data?.by_activity[a.name] ?? 0, cell: (v) => (v as number).toFixed(2) },
+    {
+      name: "hours",
+      header: "Hours (range)",
+      align: "Right",
+      accessor: (a) => report.data?.by_activity[a.name] ?? 0,
+      cell: (v) => (v as number).toFixed(2),
+    },
   ];
 
   return (
@@ -354,17 +615,32 @@ export function TimePage({ me }: { me: Me }) {
         description="Log hours against projects and activity types."
         actions={
           <>
-            <Button variant="outline" onClick={() => void exportCsv()}><Download /> Export CSV</Button>
-            <Button variant="outline" onClick={() => setDialog("timer")} disabled={Boolean(running)}><Play /> Start timer</Button>
-            <Button onClick={() => setDialog("log")}><Plus /> Log time</Button>
+            <Button variant="outline" onClick={() => void exportCsv()}>
+              <Download /> Export CSV
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => setDialog("timer")}
+              disabled={Boolean(running)}
+            >
+              <Play /> Start timer
+            </Button>
+            <Button onClick={() => setDialog("log")}>
+              <Plus /> Log time
+            </Button>
           </>
         }
       />
 
       {running ? (
         <div className="oas-banner">
-          <span><Badge variant="info">running</Badge> {running.activity} on {running.project} since {running.start}</span>
-          <Button size="sm" onClick={() => void stop()}><Square /> Stop timer</Button>
+          <span>
+            <Badge variant="info">running</Badge> {running.activity} on {running.project} since{" "}
+            {running.start}
+          </span>
+          <Button size="sm" onClick={() => void stop()}>
+            <Square /> Stop timer
+          </Button>
         </div>
       ) : null}
 
@@ -373,33 +649,61 @@ export function TimePage({ me }: { me: Me }) {
         <TextField label="To" type="date" value={to} onChange={setTo} />
         <Field label="Project">
           <Select value={project} onValueChange={setProject}>
-            <SelectTrigger style={{ minWidth: 180 }}><SelectValue /></SelectTrigger>
+            <SelectTrigger style={{ minWidth: 180 }}>
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All projects</SelectItem>
-              {(projects.data?.projects ?? []).map((p) => <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>)}
+              {(projects.data?.projects ?? []).map((p) => (
+                <SelectItem key={p.id} value={p.name}>
+                  {p.name}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </Field>
         <Field label="Activity">
           <Select value={activity} onValueChange={setActivity}>
-            <SelectTrigger style={{ minWidth: 180 }}><SelectValue /></SelectTrigger>
+            <SelectTrigger style={{ minWidth: 180 }}>
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All activities</SelectItem>
-              {(activities.data?.activities ?? []).map((a) => <SelectItem key={a.name} value={a.name}>{a.name}</SelectItem>)}
+              {(activities.data?.activities ?? []).map((a) => (
+                <SelectItem key={a.name} value={a.name}>
+                  {a.name}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </Field>
       </div>
 
       <div className="oas-kpis">
-        <Kpi label="Total hours" value={hoursText(report.data?.total_hours ?? 0)} hint={`${report.data?.entries ?? 0} entries`} />
+        <Kpi
+          label="Total hours"
+          value={hoursText(report.data?.total_hours ?? 0)}
+          hint={`${report.data?.entries ?? 0} entries`}
+        />
         <Kpi
           label="Billable amount"
-          value={Object.entries(report.data?.total_amount ?? {}).map(([c, a]) => `${a} ${c}`).join(" + ") || "0.00"}
+          value={
+            Object.entries(report.data?.total_amount ?? {})
+              .map(([c, a]) => `${a} ${c}`)
+              .join(" + ") || "0.00"
+          }
           hint="hourly rates and fixed fees, in range"
         />
-        <Kpi label="Projects" value={Object.keys(report.data?.by_project ?? {}).length} hint="with time in range" />
-        <Kpi label="Days worked" value={Object.keys(report.data?.by_day ?? {}).length} hint="with entries in range" />
+        <Kpi
+          label="Projects"
+          value={Object.keys(report.data?.by_project ?? {}).length}
+          hint="with time in range"
+        />
+        <Kpi
+          label="Days worked"
+          value={Object.keys(report.data?.by_day ?? {}).length}
+          hint="with entries in range"
+        />
       </div>
 
       <Tabs defaultValue="entries">
@@ -410,13 +714,26 @@ export function TimePage({ me }: { me: Me }) {
         </TabsList>
         <TabsContent value="entries">
           <Section title="Entries">
-            {(entries.data?.entries ?? []).length === 0 ? <EmptyNote>No entries in this range.</EmptyNote> : (
+            {(entries.data?.entries ?? []).length === 0 ? (
+              <EmptyNote>No entries in this range.</EmptyNote>
+            ) : (
               <DataTable
-                columns={entryColumns.map((c) => c.name === "hours" ? { ...c, footer: (report.data?.total_hours ?? 0).toFixed(2) } : c)}
+                columns={entryColumns.map((c) =>
+                  c.name === "hours"
+                    ? { ...c, footer: (report.data?.total_hours ?? 0).toFixed(2) }
+                    : c,
+                )}
                 rows={(entries.data?.entries ?? []).slice().reverse()}
                 getRowId={(e) => String(e.id)}
                 defaultPageSize={15}
-                rowActions={[{ tag: "edit", label: "Edit message", icon: <Pencil aria-hidden="true" />, tooltip: "Edit message" }]}
+                rowActions={[
+                  {
+                    tag: "edit",
+                    label: "Edit message",
+                    icon: <Pencil aria-hidden="true" />,
+                    tooltip: "Edit message",
+                  },
+                ]}
                 onRowAction={({ row }) => setEditing(row)}
                 caption="Time entries"
               />
@@ -424,22 +741,56 @@ export function TimePage({ me }: { me: Me }) {
           </Section>
         </TabsContent>
         <TabsContent value="projects">
-          <Section title="Projects" actions={<Button size="sm" onClick={() => setNewProject(true)}><Plus /> New project</Button>}>
-            {(projects.data?.projects ?? []).length === 0 ? <EmptyNote>No projects yet. Create one, or type a new name when logging time.</EmptyNote> : (
+          <Section
+            title="Projects"
+            actions={
+              <Button size="sm" onClick={() => setNewProject(true)}>
+                <Plus /> New project
+              </Button>
+            }
+          >
+            {(projects.data?.projects ?? []).length === 0 ? (
+              <EmptyNote>
+                No projects yet. Create one, or type a new name when logging time.
+              </EmptyNote>
+            ) : (
               <DataTable
                 columns={projectColumns}
                 rows={projects.data?.projects ?? []}
                 getRowId={(p) => String(p.id)}
                 paginated={false}
-                rowActions={me.can_approve ? [{ tag: "pricing", label: "Set pricing", icon: <Banknote aria-hidden="true" />, tooltip: "Hourly rate or fixed fee" }] : []}
+                rowActions={
+                  me.can_approve
+                    ? [
+                        {
+                          tag: "pricing",
+                          label: "Set pricing",
+                          icon: <Banknote aria-hidden="true" />,
+                          tooltip: "Hourly rate or fixed fee",
+                        },
+                      ]
+                    : []
+                }
                 onRowAction={({ row }) => setPricing(row)}
               />
             )}
           </Section>
         </TabsContent>
         <TabsContent value="activities">
-          <Section title="Activity types" actions={<Button size="sm" onClick={() => setNewActivity(true)}><Plus /> New activity</Button>}>
-            <DataTable columns={activityColumns} rows={activities.data?.activities ?? []} getRowId={(a) => a.name} paginated={false} />
+          <Section
+            title="Activity types"
+            actions={
+              <Button size="sm" onClick={() => setNewActivity(true)}>
+                <Plus /> New activity
+              </Button>
+            }
+          >
+            <DataTable
+              columns={activityColumns}
+              rows={activities.data?.activities ?? []}
+              getRowId={(a) => a.name}
+              paginated={false}
+            />
           </Section>
         </TabsContent>
       </Tabs>
@@ -452,7 +803,12 @@ export function TimePage({ me }: { me: Me }) {
         projects={projects.data?.projects ?? []}
         onDone={reloadAll}
       />
-      <NewProjectDialog open={newProject} onOpenChange={setNewProject} onDone={reloadAll} canSetRate={me.can_approve} />
+      <NewProjectDialog
+        open={newProject}
+        onOpenChange={setNewProject}
+        onDone={reloadAll}
+        canSetRate={me.can_approve}
+      />
       <EditMessageDialog entry={editing} onClose={() => setEditing(null)} onDone={reloadAll} />
       <RateDialog project={pricing} onClose={() => setPricing(null)} onDone={reloadAll} />
       <NewActivityDialog open={newActivity} onOpenChange={setNewActivity} onDone={reloadAll} />

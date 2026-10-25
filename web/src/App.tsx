@@ -1,6 +1,28 @@
-import { AppShell, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Toaster } from "@spacecorps/components/ui";
+import {
+  AppShell,
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Toaster,
+} from "@spacecorps/components/ui";
 import { ThemeProvider, useTheme } from "@spacecorps/components/theme";
-import { BookOpen, Clock, Inbox, Landmark, FileText, LayoutDashboard, LogOut, Moon, Percent, Settings, Sun, Users } from "lucide-react";
+import {
+  BookOpen,
+  Clock,
+  Inbox,
+  Landmark,
+  FileText,
+  LayoutDashboard,
+  LogOut,
+  Moon,
+  Percent,
+  Settings,
+  Sun,
+  Users,
+} from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { ApiError, api, getToken, setToken, type Me } from "./api";
 import { useHashPath } from "./hooks";
@@ -61,8 +83,19 @@ function Login({ onDone }: { onDone: () => void }) {
         </CardHeader>
         <CardContent>
           <form className="oas-form" onSubmit={submit}>
-            <TextField label="Username" value={username} onChange={setUsername} autoComplete="username" />
-            <TextField label="Password" type="password" value={password} onChange={setPassword} autoComplete="current-password" />
+            <TextField
+              label="Username"
+              value={username}
+              onChange={setUsername}
+              autoComplete="username"
+            />
+            <TextField
+              label="Password"
+              type="password"
+              value={password}
+              onChange={setPassword}
+              autoComplete="current-password"
+            />
             <ErrorNote message={error} />
             <Button type="submit" disabled={busy || !username || !password}>
               {busy ? "Signing in..." : "Sign in"}
@@ -78,7 +111,12 @@ function ThemeToggle() {
   const { theme, setTheme } = useTheme();
   const dark = theme === "dark";
   return (
-    <Button variant="ghost" size="icon" aria-label="Toggle theme" onClick={() => setTheme(dark ? "light" : "dark")}>
+    <Button
+      variant="ghost"
+      size="icon"
+      aria-label="Toggle theme"
+      onClick={() => setTheme(dark ? "light" : "dark")}
+    >
       {dark ? <Sun /> : <Moon />}
     </Button>
   );
@@ -110,7 +148,12 @@ function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
               {me.username} ({me.role})
             </div>
           )}
-          <Button variant="ghost" className={collapsed ? "w-full justify-center px-0" : "w-full justify-start"} onClick={onSignOut} aria-label="Sign out">
+          <Button
+            variant="ghost"
+            className={collapsed ? "w-full justify-center px-0" : "w-full justify-start"}
+            onClick={onSignOut}
+            aria-label="Sign out"
+          >
             <LogOut /> {collapsed ? null : "Sign out"}
           </Button>
         </>

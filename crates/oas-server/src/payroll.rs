@@ -11,7 +11,10 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use chrono::{Datelike, Duration, NaiveDate, Utc, Weekday};
-use oas_core::{ContribRates, employer_contribution, format_amount, parse_amount, parse_personnummer, utc_string};
+use oas_core::{
+    ContribRates, employer_contribution, format_amount, parse_amount, parse_personnummer,
+    utc_string,
+};
 use rusqlite::{Connection, params};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -73,15 +76,51 @@ const NOTE: &str = "Skatteverket pages as summarised by research on 2026-10-23; 
 
 // (key, label, default value)
 const RATES: &[(&str, &str, &str)] = &[
-    ("contrib_standard", "Employer contributions, born 1959 or later (percent)", "31.42"),
-    ("contrib_senior", "Employer contributions, born 1938-1958 (percent)", "10.21"),
-    ("contrib_over79", "Employer contributions, born 1937 or earlier (percent)", "0"),
-    ("contrib_youth", "Reduced contributions for young employees (percent)", "20.81"),
-    ("contrib_youth_cap", "Monthly pay up to which the youth rate applies (SEK)", "25000"),
-    ("contrib_youth_from_birth", "Youth reduction: first birth year", "2003"),
-    ("contrib_youth_to_birth", "Youth reduction: last birth year", "2007"),
-    ("contrib_youth_start", "Youth reduction: first period (YYYY-MM)", "2026-04"),
-    ("contrib_youth_end", "Youth reduction: last period (YYYY-MM)", "2027-09"),
+    (
+        "contrib_standard",
+        "Employer contributions, born 1959 or later (percent)",
+        "31.42",
+    ),
+    (
+        "contrib_senior",
+        "Employer contributions, born 1938-1958 (percent)",
+        "10.21",
+    ),
+    (
+        "contrib_over79",
+        "Employer contributions, born 1937 or earlier (percent)",
+        "0",
+    ),
+    (
+        "contrib_youth",
+        "Reduced contributions for young employees (percent)",
+        "20.81",
+    ),
+    (
+        "contrib_youth_cap",
+        "Monthly pay up to which the youth rate applies (SEK)",
+        "25000",
+    ),
+    (
+        "contrib_youth_from_birth",
+        "Youth reduction: first birth year",
+        "2003",
+    ),
+    (
+        "contrib_youth_to_birth",
+        "Youth reduction: last birth year",
+        "2007",
+    ),
+    (
+        "contrib_youth_start",
+        "Youth reduction: first period (YYYY-MM)",
+        "2026-04",
+    ),
+    (
+        "contrib_youth_end",
+        "Youth reduction: last period (YYYY-MM)",
+        "2027-09",
+    ),
 ];
 
 pub fn seed(conn: &Connection) -> rusqlite::Result<()> {
@@ -91,7 +130,9 @@ pub fn seed(conn: &Connection) -> rusqlite::Result<()> {
         |r| r.get(0),
     )?;
     if has == 0 {
-        conn.execute_batch("ALTER TABLE payroll_rate ADD COLUMN not_used INTEGER NOT NULL DEFAULT 0")?;
+        conn.execute_batch(
+            "ALTER TABLE payroll_rate ADD COLUMN not_used INTEGER NOT NULL DEFAULT 0",
+        )?;
     }
     for (k, label, v) in RATES {
         conn.execute(
@@ -106,7 +147,11 @@ fn require_admin(actor: &Actor) -> Result<(), ApiError> {
     if actor.role == Role::Admin {
         Ok(())
     } else {
-        Err(ApiError::new(StatusCode::FORBIDDEN, "forbidden", "payroll changes need the admin role"))
+        Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "payroll changes need the admin role",
+        ))
     }
 }
 
@@ -120,9 +165,22 @@ fn load_rates(conn: &Connection) -> Result<(ContribRates, Vec<String>), ApiError
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? != 0)))?
         .filter_map(Result::ok)
         .collect();
-    let get = |k: &str| rows.iter().find(|r| r.0 == k).map(|r| r.1.clone()).unwrap_or_default();
-    let f = |k: &str| get(k).parse::<f64>().map_err(|_| ApiError::invalid(format!("payroll rate {k} is not a number")));
-    let i = |k: &str| get(k).parse::<i32>().map_err(|_| ApiError::invalid(format!("payroll rate {k} is not a whole number")));
+    let get = |k: &str| {
+        rows.iter()
+            .find(|r| r.0 == k)
+            .map(|r| r.1.clone())
+            .unwrap_or_default()
+    };
+    let f = |k: &str| {
+        get(k)
+            .parse::<f64>()
+            .map_err(|_| ApiError::invalid(format!("payroll rate {k} is not a number")))
+    };
+    let i = |k: &str| {
+        get(k)
+            .parse::<i32>()
+            .map_err(|_| ApiError::invalid(format!("payroll rate {k} is not a whole number")))
+    };
     let rates = ContribRates {
         standard: f("contrib_standard")?,
         senior: f("contrib_senior")?,
@@ -177,7 +235,11 @@ pub async fn set_rate(
         params![value, key],
     )?;
     if n == 0 {
-        return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such payroll rate"));
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "no such payroll rate",
+        ));
     }
     load_rates(&tx)?;
     tx.commit()?;
@@ -207,9 +269,23 @@ pub async fn verify_rate(
         conn.execute("UPDATE payroll_rate SET verified = 0, verified_by = NULL, verified_at = NULL WHERE key = ?1", params![key])?
     };
     if n == 0 {
-        return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such payroll rate"));
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "no such payroll rate",
+        ));
     }
-    ledger::audit(&conn, &actor, if b.verified { "payroll.verify" } else { "payroll.unverify" }, &key, "")?;
+    ledger::audit(
+        &conn,
+        &actor,
+        if b.verified {
+            "payroll.verify"
+        } else {
+            "payroll.unverify"
+        },
+        &key,
+        "",
+    )?;
     Ok(Json(json!({"key": key, "verified": b.verified})))
 }
 
@@ -253,12 +329,29 @@ pub async fn set_not_used(
             params![key],
         )?
     } else {
-        conn.execute("UPDATE payroll_rate SET not_used = 0 WHERE key = ?1", params![key])?
+        conn.execute(
+            "UPDATE payroll_rate SET not_used = 0 WHERE key = ?1",
+            params![key],
+        )?
     };
     if n == 0 {
-        return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such payroll rate"));
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "no such payroll rate",
+        ));
     }
-    ledger::audit(&conn, &actor, if b.not_used { "payroll.not_used" } else { "payroll.used" }, &key, "")?;
+    ledger::audit(
+        &conn,
+        &actor,
+        if b.not_used {
+            "payroll.not_used"
+        } else {
+            "payroll.used"
+        },
+        &key,
+        "",
+    )?;
     Ok(Json(json!({"key": key, "not_used": b.not_used})))
 }
 
@@ -284,13 +377,24 @@ pub async fn add_employee(
         "INSERT INTO employee(name, identity, birth_year, created_at) VALUES (?1, ?2, ?3, ?4)",
         params![name, identity, birth_year, utc_string(Utc::now())],
     )
-    .map_err(|_| ApiError::new(StatusCode::CONFLICT, "conflict", "an employee with that identity number already exists"))?;
+    .map_err(|_| {
+        ApiError::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            "an employee with that identity number already exists",
+        )
+    })?;
     let id = conn.last_insert_rowid();
     ledger::audit(&conn, &actor, "employee.add", &id.to_string(), &name)?;
-    Ok(Json(json!({"employee": {"id": id, "name": name, "identity": identity, "birth_year": birth_year, "active": true}})))
+    Ok(Json(
+        json!({"employee": {"id": id, "name": name, "identity": identity, "birth_year": birth_year, "active": true}}),
+    ))
 }
 
-pub async fn list_employees(State(st): State<Shared>, Extension(actor): Extension<Actor>) -> ApiResult {
+pub async fn list_employees(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+) -> ApiResult {
     let conn = st.conn.lock().unwrap();
     let rows: Vec<Value> = conn
         .prepare("SELECT id, name, identity, birth_year, active FROM employee ORDER BY id")?
@@ -314,7 +418,11 @@ pub async fn deactivate_employee(
     let conn = st.conn.lock().unwrap();
     let n = conn.execute("UPDATE employee SET active = 0 WHERE id = ?1", params![id])?;
     if n == 0 {
-        return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such employee"));
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "no such employee",
+        ));
     }
     ledger::audit(&conn, &actor, "employee.deactivate", &id.to_string(), "")?;
     Ok(Json(json!({"status": "ok"})))
@@ -349,16 +457,25 @@ pub async fn create_run(
 ) -> ApiResult {
     require_admin(&actor)?;
     check_period(&b.period)?;
-    NaiveDate::parse_from_str(&b.pay_date, "%Y-%m-%d").map_err(|_| ApiError::invalid("pay_date must be YYYY-MM-DD"))?;
+    NaiveDate::parse_from_str(&b.pay_date, "%Y-%m-%d")
+        .map_err(|_| ApiError::invalid("pay_date must be YYYY-MM-DD"))?;
     if b.lines.is_empty() {
         return Err(ApiError::invalid("a pay run needs at least one line"));
     }
     let mut conn = st.conn.lock().unwrap();
     let (rates, _) = load_rates(&conn)?;
     let tx = conn.transaction()?;
-    let exists: i64 = tx.query_row("SELECT COUNT(*) FROM pay_run WHERE period = ?1", params![b.period], |r| r.get(0))?;
+    let exists: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM pay_run WHERE period = ?1",
+        params![b.period],
+        |r| r.get(0),
+    )?;
     if exists > 0 {
-        return Err(ApiError::new(StatusCode::CONFLICT, "conflict", format!("there is already a pay run for {}", b.period)));
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            format!("there is already a pay run for {}", b.period),
+        ));
     }
     tx.execute(
         "INSERT INTO pay_run(period, pay_date, created_by, created_at) VALUES (?1, ?2, ?3, ?4)",
@@ -368,22 +485,40 @@ pub async fn create_run(
     let mut seen = std::collections::HashSet::new();
     for l in &b.lines {
         if !seen.insert(l.employee_id) {
-            return Err(ApiError::invalid(format!("employee {} appears twice", l.employee_id)));
+            return Err(ApiError::invalid(format!(
+                "employee {} appears twice",
+                l.employee_id
+            )));
         }
         let (birth_year, active): (i32, i64) = tx
-            .query_row("SELECT birth_year, active FROM employee WHERE id = ?1", params![l.employee_id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .query_row(
+                "SELECT birth_year, active FROM employee WHERE id = ?1",
+                params![l.employee_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
             .map_err(|_| ApiError::invalid(format!("unknown employee {}", l.employee_id)))?;
         if active == 0 {
-            return Err(ApiError::invalid(format!("employee {} is not active", l.employee_id)));
+            return Err(ApiError::invalid(format!(
+                "employee {} is not active",
+                l.employee_id
+            )));
         }
         let gross = parse_amount(&l.gross).map_err(ApiError::invalid)?;
         if gross == 0 || gross > 100_000_000 {
-            return Err(ApiError::invalid("gross pay must be above zero and below 1 000 000 SEK"));
+            return Err(ApiError::invalid(
+                "gross pay must be above zero and below 1 000 000 SEK",
+            ));
         }
         let tax = match (&l.tax, l.tax_percent) {
             (Some(t), _) => parse_amount(t).map_err(ApiError::invalid)?,
-            (None, Some(p)) if (0.0..=70.0).contains(&p) => ((gross as f64 * p / 100.0) / 100.0).round() as i64 * 100,
-            _ => return Err(ApiError::invalid("give tax (SEK) or tax_percent (0-70) for every line")),
+            (None, Some(p)) if (0.0..=70.0).contains(&p) => {
+                ((gross as f64 * p / 100.0) / 100.0).round() as i64 * 100
+            }
+            _ => {
+                return Err(ApiError::invalid(
+                    "give tax (SEK) or tax_percent (0-70) for every line",
+                ));
+            }
         };
         if tax > gross {
             return Err(ApiError::invalid("tax cannot exceed gross pay"));
@@ -392,7 +527,13 @@ pub async fn create_run(
         let blocked: Vec<String> = {
             let mut out = vec![];
             for k in needed {
-                let nu: i64 = tx.query_row("SELECT not_used FROM payroll_rate WHERE key = ?1", params![k], |r| r.get(0)).unwrap_or(0);
+                let nu: i64 = tx
+                    .query_row(
+                        "SELECT not_used FROM payroll_rate WHERE key = ?1",
+                        params![k],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0);
                 if nu == 1 {
                     out.push(k.to_string());
                 }
@@ -421,7 +562,11 @@ pub async fn create_run(
 /// August), moved to the next weekday. Public holidays are not considered. Unverified.
 fn agi_due(period: &str) -> Option<String> {
     let first = NaiveDate::parse_from_str(&format!("{period}-01"), "%Y-%m-%d").ok()?;
-    let (y, m) = if first.month() == 12 { (first.year() + 1, 1) } else { (first.year(), first.month() + 1) };
+    let (y, m) = if first.month() == 12 {
+        (first.year() + 1, 1)
+    } else {
+        (first.year(), first.month() + 1)
+    };
     let day = if m == 1 || m == 8 { 17 } else { 12 };
     let mut d = NaiveDate::from_ymd_opt(y, m, day)?;
     while matches!(d.weekday(), Weekday::Sat | Weekday::Sun) {
@@ -449,7 +594,9 @@ fn run_json(conn: &Connection, id: i64, admin: bool) -> Result<Value, ApiError> 
         .query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))?
         .filter_map(Result::ok)
         .collect();
-    let (g, t, c) = lines.iter().fold((0, 0, 0), |a, l| (a.0 + l.3, a.1 + l.4, a.2 + l.5));
+    let (g, t, c) = lines
+        .iter()
+        .fold((0, 0, 0), |a, l| (a.0 + l.3, a.1 + l.4, a.2 + l.5));
     let (_, unverified) = load_rates(conn)?;
     let line_json: Vec<Value> = lines
         .iter()
@@ -480,23 +627,54 @@ pub async fn list_runs(State(st): State<Shared>, Extension(actor): Extension<Act
         .filter_map(Result::ok)
         .collect();
     let admin = actor.role == Role::Admin;
-    let runs: Result<Vec<Value>, ApiError> = ids.into_iter().map(|id| run_json(&conn, id, admin)).collect();
+    let runs: Result<Vec<Value>, ApiError> = ids
+        .into_iter()
+        .map(|id| run_json(&conn, id, admin))
+        .collect();
     Ok(Json(json!({"runs": runs?})))
 }
 
-pub async fn get_run(State(st): State<Shared>, Extension(actor): Extension<Actor>, Path(id): Path<i64>) -> ApiResult {
+pub async fn get_run(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<i64>,
+) -> ApiResult {
     let conn = st.conn.lock().unwrap();
-    Ok(Json(json!({"run": run_json(&conn, id, actor.role == Role::Admin)?})))
+    Ok(Json(
+        json!({"run": run_json(&conn, id, actor.role == Role::Admin)?}),
+    ))
 }
 
-pub async fn delete_run(State(st): State<Shared>, Extension(actor): Extension<Actor>, Path(id): Path<i64>) -> ApiResult {
+pub async fn delete_run(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<i64>,
+) -> ApiResult {
     require_admin(&actor)?;
     let conn = st.conn.lock().unwrap();
-    let status: Option<String> = conn.query_row("SELECT status FROM pay_run WHERE id = ?1", params![id], |r| r.get(0)).ok();
+    let status: Option<String> = conn
+        .query_row(
+            "SELECT status FROM pay_run WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .ok();
     match status.as_deref() {
-        None => return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such pay run")),
+        None => {
+            return Err(ApiError::new(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "no such pay run",
+            ));
+        }
         Some("draft") => {}
-        Some(_) => return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "an approved pay run cannot be deleted")),
+        Some(_) => {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "conflict",
+                "an approved pay run cannot be deleted",
+            ));
+        }
     }
     conn.execute("DELETE FROM pay_run WHERE id = ?1", params![id])?;
     ledger::audit(&conn, &actor, "payroll.run.delete", &id.to_string(), "")?;
@@ -506,14 +684,26 @@ pub async fn delete_run(State(st): State<Shared>, Extension(actor): Extension<Ac
 /// Approve a pay run: it can no longer change, and a draft voucher is proposed for the ledger.
 /// Salaries (7210) and employer contributions (7510) are debited; withheld tax (2710), contributions
 /// payable (2731) and the net salary paid from the bank (1930) are credited.
-pub async fn approve_run(State(st): State<Shared>, Extension(actor): Extension<Actor>, Path(id): Path<i64>) -> ApiResult {
+pub async fn approve_run(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<i64>,
+) -> ApiResult {
     require_admin(&actor)?;
     let mut conn = st.conn.lock().unwrap();
     let (period, pay_date, status): (String, String, String) = conn
-        .query_row("SELECT period, pay_date, status FROM pay_run WHERE id = ?1", params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .query_row(
+            "SELECT period, pay_date, status FROM pay_run WHERE id = ?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
         .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such pay run"))?;
     if status != "draft" {
-        return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "this pay run is already approved"));
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            "this pay run is already approved",
+        ));
     }
     let (g, t, c): (i64, i64, i64) = conn.query_row(
         "SELECT COALESCE(SUM(gross),0), COALESCE(SUM(tax),0), COALESCE(SUM(contribution),0) FROM pay_line WHERE run_id = ?1",
@@ -526,7 +716,11 @@ pub async fn approve_run(State(st): State<Shared>, Extension(actor): Extension<A
         credit: credit.filter(|v| *v > 0).map(format_amount),
         vat_code: None,
     };
-    let mut lines = vec![line(7210, Some(g), None), line(2710, None, Some(t)), line(1930, None, Some(g - t))];
+    let mut lines = vec![
+        line(7210, Some(g), None),
+        line(2710, None, Some(t)),
+        line(1930, None, Some(g - t)),
+    ];
     if c > 0 {
         lines.push(line(7510, Some(c), None));
         lines.push(line(2731, None, Some(c)));
@@ -545,12 +739,23 @@ pub async fn approve_run(State(st): State<Shared>, Extension(actor): Extension<A
         "UPDATE pay_run SET status = 'approved', approved_by = ?1, approved_at = ?2, ledger_draft_id = ?3 WHERE id = ?4",
         params![actor.name, utc_string(Utc::now()), draft_id, id],
     )?;
-    ledger::audit(&conn, &actor, "payroll.run.approve", &id.to_string(), &period)?;
-    Ok(Json(json!({"run": run_json(&conn, id, true)?, "ledger_draft": ledger::draft_view(&conn, draft_id)?})))
+    ledger::audit(
+        &conn,
+        &actor,
+        "payroll.run.approve",
+        &id.to_string(),
+        &period,
+    )?;
+    Ok(Json(
+        json!({"run": run_json(&conn, id, true)?, "ledger_draft": ledger::draft_view(&conn, draft_id)?}),
+    ))
 }
 
 fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 /// Whole kronor for the AGI file, rounded to the nearest krona.
@@ -567,21 +772,34 @@ fn plausible_org(d: &str) -> bool {
     }
     let first_two: u32 = d[..2].parse().unwrap_or(0);
     let third: u32 = d[2..3].parse().unwrap_or(0);
-    let ok_prefix = matches!(first_two / 10, 1 | 2 | 3 | 5 | 7 | 8 | 9) || matches!(first_two, 60..=64 | 66 | 68);
+    let ok_prefix = matches!(first_two / 10, 1 | 2 | 3 | 5 | 7 | 8 | 9)
+        || matches!(first_two, 60..=64 | 66 | 68);
     ok_prefix && third >= 2
 }
 
 /// AGI XML for an approved pay run, following the structure of Skatteverket's schema 1.1 and its
 /// published example files (technical description 1.1.18.2). It has NOT yet been run through
 /// Skatteverket's AGI test service, so treat it as unverified until it passes there.
-pub async fn agi_xml(State(st): State<Shared>, Extension(actor): Extension<Actor>, Path(id): Path<i64>) -> Result<Response, ApiError> {
+pub async fn agi_xml(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<i64>,
+) -> Result<Response, ApiError> {
     require_admin(&actor)?;
     let conn = st.conn.lock().unwrap();
     let (period, status): (String, String) = conn
-        .query_row("SELECT period, status FROM pay_run WHERE id = ?1", params![id], |r| Ok((r.get(0)?, r.get(1)?)))
+        .query_row(
+            "SELECT period, status FROM pay_run WHERE id = ?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
         .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such pay run"))?;
     if status != "approved" {
-        return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "approve the pay run before creating the AGI file"));
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            "approve the pay run before creating the AGI file",
+        ));
     }
     let (org, name, cname, phone, email): (String, String, String, String, String) = conn
         .query_row(
@@ -592,10 +810,14 @@ pub async fn agi_xml(State(st): State<Shared>, Extension(actor): Extension<Actor
         .map_err(|_| ApiError::invalid("set the company first: oas company set NAME --org-number ... --contact-name ... --contact-phone ... --contact-email ..."))?;
     let org_digits: String = org.chars().filter(|c| c.is_ascii_digit()).collect();
     if !plausible_org(&org_digits) {
-        return Err(ApiError::invalid("the organisation number does not look like a Swedish organisation number (10 digits, for example 556026-9986)"));
+        return Err(ApiError::invalid(
+            "the organisation number does not look like a Swedish organisation number (10 digits, for example 556026-9986)",
+        ));
     }
     if cname.is_empty() || phone.is_empty() || email.is_empty() {
-        return Err(ApiError::invalid("the AGI file needs a technical contact: oas company set ... --contact-name --contact-phone --contact-email"));
+        return Err(ApiError::invalid(
+            "the AGI file needs a technical contact: oas company set ... --contact-name --contact-phone --contact-email",
+        ));
     }
     let lines: Vec<(i64, String, i64, i64, i64)> = conn
         .prepare(
@@ -617,13 +839,28 @@ pub async fn agi_xml(State(st): State<Shared>, Extension(actor): Extension<Actor
         xml_escape(&name),
         if unverified.is_empty() { "none".to_string() } else { unverified.join(", ") }
     ));
-    x.push_str(&agi_body(&agid, &period_code, &Contact { name: &cname, phone: &phone, email: &email }, &lines, sum_tax, sum_contrib));
+    x.push_str(&agi_body(
+        &agid,
+        &period_code,
+        &Contact {
+            name: &cname,
+            phone: &phone,
+            email: &email,
+        },
+        &lines,
+        sum_tax,
+        sum_contrib,
+    ));
     let mut res = x.into_response();
     let h = res.headers_mut();
-    h.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/xml; charset=utf-8"));
+    h.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/xml; charset=utf-8"),
+    );
     h.insert(
         header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&format!("attachment; filename=\"agi-{period}.xml\"")).unwrap_or(HeaderValue::from_static("attachment")),
+        HeaderValue::from_str(&format!("attachment; filename=\"agi-{period}.xml\""))
+            .unwrap_or(HeaderValue::from_static("attachment")),
     );
     Ok(res)
 }
@@ -634,7 +871,14 @@ struct Contact<'a> {
     email: &'a str,
 }
 
-fn agi_body(agid: &str, period: &str, c: &Contact, lines: &[(i64, String, i64, i64, i64)], sum_tax: i64, sum_contrib: i64) -> String {
+fn agi_body(
+    agid: &str,
+    period: &str,
+    c: &Contact,
+    lines: &[(i64, String, i64, i64, i64)],
+    sum_tax: i64,
+    sum_contrib: i64,
+) -> String {
     let created = Utc::now().format("%Y-%m-%dT%H:%M:%S");
     let mut x = String::new();
     x.push_str("<Skatteverket omrade=\"Arbetsgivardeklaration\"\n  xmlns=\"http://xmls.skatteverket.se/se/skatteverket/da/instans/schema/1.1\"\n  xmlns:agd=\"http://xmls.skatteverket.se/se/skatteverket/da/komponent/schema/1.1\"\n  xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n  xsi:schemaLocation=\"http://xmls.skatteverket.se/se/skatteverket/da/instans/schema/1.1 http://xmls.skatteverket.se/se/skatteverket/da/arbetsgivardeklaration/arbetsgivardeklaration_1.1.xsd\">\n");
