@@ -77,27 +77,35 @@ function NewCustomer({
             Customers in Sweden only for now. The address is required to issue an invoice.
           </DialogDescription>
         </DialogHeader>
-        <DialogBody>
-          <div className="oas-form">
-            <TextField label="Name" value={name} onChange={setName} />
-            <TextField
-              label="Address"
-              value={address}
-              onChange={setAddress}
-              hint="Street, postcode and city, separated by commas"
-            />
-            <TextField label="Organisation number" value={org} onChange={setOrg} />
-            <TextField label="Email" value={email} onChange={setEmail} />
-          </div>
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button disabled={!name.trim()} onClick={() => void save()}>
-            Add
-          </Button>
-        </DialogFooter>
+        <form
+          className="oas-dialog-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          <DialogBody>
+            <div className="oas-form">
+              <TextField label="Name" value={name} onChange={setName} />
+              <TextField
+                label="Address"
+                value={address}
+                onChange={setAddress}
+                hint="Street, postcode and city, separated by commas"
+              />
+              <TextField label="Organisation number" value={org} onChange={setOrg} />
+              <TextField label="Email" value={email} onChange={setEmail} />
+            </div>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button disabled={!name.trim()} type="submit">
+              Add
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -168,89 +176,97 @@ function NewInvoice({
             billed twice.
           </DialogDescription>
         </DialogHeader>
-        <DialogBody>
-          <div className="oas-form">
-            <Field label="Customer">
-              <Select value={customer} onValueChange={setCustomer}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Choose a customer" />
-                </SelectTrigger>
-                <SelectContent>
-                  {customers.map((c) => (
-                    <SelectItem key={c.id} value={String(c.id)}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Tabs value={mode} onValueChange={setMode}>
-              <TabsList>
-                <TabsTrigger value="time">From tracked time</TabsTrigger>
-                <TabsTrigger value="manual">One line</TabsTrigger>
-              </TabsList>
-              <TabsContent value="time">
-                <div className="oas-form" style={{ marginTop: ".75rem" }}>
-                  <Field label="Project" hint="Only projects with an hourly rate or fixed fee">
-                    <Select value={project} onValueChange={setProject}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Choose a project" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {priced.map((p) => (
-                          <SelectItem key={p.id} value={p.name}>
-                            {p.name}, {money(p.rate, p.currency)}
-                            {p.rate_type === "hourly" ? " / h" : " fixed"}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <div className="oas-form-row">
-                    <TextField label="From" type="date" value={from} onChange={setFrom} />
-                    <TextField label="To" type="date" value={to} onChange={setTo} />
-                  </div>
-                </div>
-              </TabsContent>
-              <TabsContent value="manual">
-                <div className="oas-form" style={{ marginTop: ".75rem" }}>
-                  <TextField label="Description" value={description} onChange={setDescription} />
-                  <div className="oas-form-row">
-                    <TextField label="Quantity" value={quantity} onChange={setQuantity} />
-                    <TextField
-                      label="Unit price (SEK, excl. VAT)"
-                      value={unitPrice}
-                      onChange={setUnitPrice}
-                    />
-                  </div>
-                </div>
-              </TabsContent>
-            </Tabs>
-            <div className="oas-form-row">
-              <Field label="VAT">
-                <Select value={vat} onValueChange={setVat}>
+        <form
+          className="oas-dialog-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          <DialogBody>
+            <div className="oas-form">
+              <Field label="Customer">
+                <Select value={customer} onValueChange={setCustomer}>
                   <SelectTrigger>
-                    <SelectValue />
+                    <SelectValue placeholder="Choose a customer" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="25">25%</SelectItem>
-                    <SelectItem value="12">12%</SelectItem>
-                    <SelectItem value="6">6%</SelectItem>
+                    {customers.map((c) => (
+                      <SelectItem key={c.id} value={String(c.id)}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </Field>
-              <TextField label="Days until due" value={dueDays} onChange={setDueDays} />
+              <Tabs value={mode} onValueChange={setMode}>
+                <TabsList>
+                  <TabsTrigger value="time">From tracked time</TabsTrigger>
+                  <TabsTrigger value="manual">One line</TabsTrigger>
+                </TabsList>
+                <TabsContent value="time">
+                  <div className="oas-form" style={{ marginTop: ".75rem" }}>
+                    <Field label="Project" hint="Only projects with an hourly rate or fixed fee">
+                      <Select value={project} onValueChange={setProject}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Choose a project" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {priced.map((p) => (
+                            <SelectItem key={p.id} value={p.name}>
+                              {p.name}, {money(p.rate, p.currency)}
+                              {p.rate_type === "hourly" ? " / h" : " fixed"}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                    <div className="oas-form-row">
+                      <TextField label="From" type="date" value={from} onChange={setFrom} />
+                      <TextField label="To" type="date" value={to} onChange={setTo} />
+                    </div>
+                  </div>
+                </TabsContent>
+                <TabsContent value="manual">
+                  <div className="oas-form" style={{ marginTop: ".75rem" }}>
+                    <TextField label="Description" value={description} onChange={setDescription} />
+                    <div className="oas-form-row">
+                      <TextField label="Quantity" value={quantity} onChange={setQuantity} />
+                      <TextField
+                        label="Unit price (SEK, excl. VAT)"
+                        value={unitPrice}
+                        onChange={setUnitPrice}
+                      />
+                    </div>
+                  </div>
+                </TabsContent>
+              </Tabs>
+              <div className="oas-form-row">
+                <Field label="VAT">
+                  <Select value={vat} onValueChange={setVat}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="25">25%</SelectItem>
+                      <SelectItem value="12">12%</SelectItem>
+                      <SelectItem value="6">6%</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <TextField label="Days until due" value={dueDays} onChange={setDueDays} />
+              </div>
             </div>
-          </div>
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button disabled={!ready} onClick={() => void save()}>
-            Create draft
-          </Button>
-        </DialogFooter>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button disabled={!ready} type="submit">
+              Create draft
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

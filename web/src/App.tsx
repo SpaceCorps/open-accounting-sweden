@@ -57,6 +57,10 @@ function Login({ onDone }: { onDone: () => void }) {
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (!username || !password) {
+      setError("Enter your username and password.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -105,7 +109,8 @@ function Login({ onDone }: { onDone: () => void }) {
               autoComplete="current-password"
             />
             <ErrorNote message={error} />
-            <Button type="submit" disabled={busy || !username || !password}>
+            {/* Kept enabled so Tab reaches it; empty fields get a message instead. */}
+            <Button type="submit" disabled={busy}>
               {busy ? "Signing in..." : "Sign in"}
             </Button>
           </form>

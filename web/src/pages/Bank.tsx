@@ -136,116 +136,126 @@ function BookDialog(props: {
             Choose the other accounts; the bank account (1930) line is added for you.
           </DialogDescription>
         </DialogHeader>
-        <DialogBody>
-          <div className="oas-form">
-            <TextField label="Description" value={description} onChange={setDescription} />
-            <div className="oas-lines oas-muted">
-              <span>Account</span>
-              <span>Debit</span>
-              <span>Credit</span>
-              <span>VAT code</span>
-              <span />
-            </div>
-            {rows.map((r, i) => (
-              <div className="oas-lines" key={i}>
-                <Select value={r.account} onValueChange={(v) => set(i, { account: v })}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Choose account" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {props.accounts
-                      .filter((a) => a.number !== 1930)
-                      .map((a) => (
-                        <SelectItem key={a.number} value={String(a.number)}>
-                          {a.number} {a.name}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-                <Input
-                  inputMode="decimal"
-                  value={r.debit}
-                  onChange={(e) => set(i, { debit: e.target.value, credit: "" })}
-                  placeholder="0.00"
-                />
-                <Input
-                  inputMode="decimal"
-                  value={r.credit}
-                  onChange={(e) => set(i, { credit: e.target.value, debit: "" })}
-                  placeholder="0.00"
-                />
-                <VatCodeSelect
-                  value={r.vat}
-                  onChange={(v) => set(i, { vat: v })}
-                  codes={vatCfg.data?.codes ?? []}
-                />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Remove line"
-                  disabled={rows.length <= 1}
-                  onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}
-                >
-                  <Trash2 />
-                </Button>
-              </div>
-            ))}
-            <div className="oas-actions">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  setRows((rs) => [...rs, { account: "", debit: "", credit: "", vat: "" }])
-                }
-              >
-                <Plus /> Add line
-              </Button>
-              <Badge variant={balanced ? "success" : "warning"}>
-                other lines net {amount(net)}, bank {amount(total)}{" "}
-                {balanced ? "balanced" : "not balanced"}
-              </Badge>
-            </div>
+        <form
+          className="oas-dialog-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          <DialogBody>
             <div className="oas-form">
-              <span className="oas-muted">Receipts to attach</span>
-              {selectable.length === 0 ? (
-                <span className="oas-muted">No unlinked receipts. Upload one in the Inbox.</span>
-              ) : (
-                selectable.map((d) => (
-                  <label key={d.id} className="oas-actions" style={{ cursor: "pointer" }}>
-                    <Checkbox
-                      checked={picked.includes(d.id)}
-                      onCheckedChange={(c) =>
-                        setPicked((p) => (c ? [...p, d.id] : p.filter((x) => x !== d.id)))
-                      }
-                    />
-                    <span>{d.filename}</span>
-                    <span className="oas-muted">
-                      {d.vendor} {d.amount ? money(d.amount, d.currency) : ""} {d.date ?? ""}
-                    </span>
-                    {props.confirmedDocIds.includes(d.id) ? (
-                      <Badge variant="success">confirmed match</Badge>
-                    ) : null}
-                  </label>
-                ))
-              )}
+              <TextField label="Description" value={description} onChange={setDescription} />
+              <div className="oas-lines oas-muted">
+                <span>Account</span>
+                <span>Debit</span>
+                <span>Credit</span>
+                <span>VAT code</span>
+                <span />
+              </div>
+              {rows.map((r, i) => (
+                <div className="oas-lines" key={i}>
+                  <Select value={r.account} onValueChange={(v) => set(i, { account: v })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose account" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {props.accounts
+                        .filter((a) => a.number !== 1930)
+                        .map((a) => (
+                          <SelectItem key={a.number} value={String(a.number)}>
+                            {a.number} {a.name}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    inputMode="decimal"
+                    value={r.debit}
+                    onChange={(e) => set(i, { debit: e.target.value, credit: "" })}
+                    placeholder="0.00"
+                  />
+                  <Input
+                    inputMode="decimal"
+                    value={r.credit}
+                    onChange={(e) => set(i, { credit: e.target.value, debit: "" })}
+                    placeholder="0.00"
+                  />
+                  <VatCodeSelect
+                    value={r.vat}
+                    onChange={(v) => set(i, { vat: v })}
+                    codes={vatCfg.data?.codes ?? []}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Remove line"
+                    disabled={rows.length <= 1}
+                    onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}
+                  >
+                    <Trash2 />
+                  </Button>
+                </div>
+              ))}
+              <div className="oas-actions">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    setRows((rs) => [...rs, { account: "", debit: "", credit: "", vat: "" }])
+                  }
+                >
+                  <Plus /> Add line
+                </Button>
+                <Badge variant={balanced ? "success" : "warning"}>
+                  other lines net {amount(net)}, bank {amount(total)}{" "}
+                  {balanced ? "balanced" : "not balanced"}
+                </Badge>
+              </div>
+              <div className="oas-form">
+                <span className="oas-muted">Receipts to attach</span>
+                {selectable.length === 0 ? (
+                  <span className="oas-muted">No unlinked receipts. Upload one in the Inbox.</span>
+                ) : (
+                  selectable.map((d) => (
+                    <label key={d.id} className="oas-actions" style={{ cursor: "pointer" }}>
+                      <Checkbox
+                        checked={picked.includes(d.id)}
+                        onCheckedChange={(c) =>
+                          setPicked((p) => (c ? [...p, d.id] : p.filter((x) => x !== d.id)))
+                        }
+                      />
+                      <span>{d.filename}</span>
+                      <span className="oas-muted">
+                        {d.vendor} {d.amount ? money(d.amount, d.currency) : ""} {d.date ?? ""}
+                      </span>
+                      {props.confirmedDocIds.includes(d.id) ? (
+                        <Badge variant="success">confirmed match</Badge>
+                      ) : null}
+                    </label>
+                  ))
+                )}
+              </div>
             </div>
-          </div>
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="outline" onClick={props.onClose}>
-            Cancel
-          </Button>
-          <Button
-            disabled={
-              !balanced ||
-              rows.some((r) => (num(r.debit) > 0 || num(r.credit) > 0) && !r.account) ||
-              !rows.some((r) => r.account)
-            }
-            onClick={() => void save()}
-          >
-            Create draft
-          </Button>
-        </DialogFooter>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={props.onClose}>
+              Cancel
+            </Button>
+            <Button
+              disabled={
+                !balanced ||
+                rows.some((r) => (num(r.debit) > 0 || num(r.credit) > 0) && !r.account) ||
+                !rows.some((r) => r.account)
+              }
+              type="submit"
+            >
+              Create draft
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

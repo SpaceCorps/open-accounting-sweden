@@ -123,30 +123,38 @@ function AddEmployee({
             shown only to admins.
           </DialogDescription>
         </DialogHeader>
-        <DialogBody>
-          <div className="oas-form">
-            <TextField label="Name" value={name} onChange={setName} />
-            <TextField
-              label="Personnummer"
-              value={identity}
-              onChange={setIdentity}
-              placeholder="YYYYMMDDNNNC"
-              hint="12 digits; a samordningsnummer also works"
-              autoComplete="off"
-            />
-          </div>
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button
-            disabled={!name.trim() || identity.replace(/\D/g, "").length !== 12}
-            onClick={() => void save()}
-          >
-            Add
-          </Button>
-        </DialogFooter>
+        <form
+          className="oas-dialog-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          <DialogBody>
+            <div className="oas-form">
+              <TextField label="Name" value={name} onChange={setName} />
+              <TextField
+                label="Personnummer"
+                value={identity}
+                onChange={setIdentity}
+                placeholder="YYYYMMDDNNNC"
+                hint="12 digits; a samordningsnummer also works"
+                autoComplete="off"
+              />
+            </div>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!name.trim() || identity.replace(/\D/g, "").length !== 12}
+              type="submit"
+            >
+              Add
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -221,73 +229,86 @@ function NewRun({
             a percentage. Leave gross empty to skip a person this month.
           </DialogDescription>
         </DialogHeader>
-        <DialogBody>
-          <div className="oas-form">
-            <div className="oas-form-row">
-              <TextField label="Period" value={period} onChange={setPeriod} placeholder="2026-10" />
-              <TextField label="Pay date" type="date" value={payDate} onChange={setPayDate} />
+        <form
+          className="oas-dialog-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          <DialogBody>
+            <div className="oas-form">
+              <div className="oas-form-row">
+                <TextField
+                  label="Period"
+                  value={period}
+                  onChange={setPeriod}
+                  placeholder="2026-10"
+                />
+                <TextField label="Pay date" type="date" value={payDate} onChange={setPayDate} />
+              </div>
+              {active.length === 0 ? (
+                <EmptyNote>Add an employee first.</EmptyNote>
+              ) : (
+                <>
+                  <div
+                    className="oas-lines oas-muted"
+                    style={{ gridTemplateColumns: "1fr 8rem 8rem 6rem" }}
+                  >
+                    <span>Employee</span>
+                    <span>Gross (SEK)</span>
+                    <span>Tax (SEK)</span>
+                    <span>or tax %</span>
+                  </div>
+                  {active.map((e) => {
+                    const r = get(e);
+                    return (
+                      <div
+                        className="oas-lines"
+                        style={{ gridTemplateColumns: "1fr 8rem 8rem 6rem" }}
+                        key={e.id}
+                      >
+                        <span>{e.name}</span>
+                        <Input
+                          inputMode="decimal"
+                          value={r.gross}
+                          onChange={(ev) => set(e, { gross: ev.target.value })}
+                          placeholder="0.00"
+                        />
+                        <Input
+                          inputMode="decimal"
+                          value={r.tax}
+                          onChange={(ev) => set(e, { tax: ev.target.value })}
+                          placeholder="0.00"
+                        />
+                        <Input
+                          inputMode="decimal"
+                          value={r.percent}
+                          onChange={(ev) => set(e, { percent: ev.target.value })}
+                          placeholder="30"
+                        />
+                      </div>
+                    );
+                  })}
+                </>
+              )}
             </div>
-            {active.length === 0 ? (
-              <EmptyNote>Add an employee first.</EmptyNote>
-            ) : (
-              <>
-                <div
-                  className="oas-lines oas-muted"
-                  style={{ gridTemplateColumns: "1fr 8rem 8rem 6rem" }}
-                >
-                  <span>Employee</span>
-                  <span>Gross (SEK)</span>
-                  <span>Tax (SEK)</span>
-                  <span>or tax %</span>
-                </div>
-                {active.map((e) => {
-                  const r = get(e);
-                  return (
-                    <div
-                      className="oas-lines"
-                      style={{ gridTemplateColumns: "1fr 8rem 8rem 6rem" }}
-                      key={e.id}
-                    >
-                      <span>{e.name}</span>
-                      <Input
-                        inputMode="decimal"
-                        value={r.gross}
-                        onChange={(ev) => set(e, { gross: ev.target.value })}
-                        placeholder="0.00"
-                      />
-                      <Input
-                        inputMode="decimal"
-                        value={r.tax}
-                        onChange={(ev) => set(e, { tax: ev.target.value })}
-                        placeholder="0.00"
-                      />
-                      <Input
-                        inputMode="decimal"
-                        value={r.percent}
-                        onChange={(ev) => set(e, { percent: ev.target.value })}
-                        placeholder="30"
-                      />
-                    </div>
-                  );
-                })}
-              </>
-            )}
-          </div>
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button
-            disabled={
-              filled.length === 0 ||
-              filled.some((r) => r.tax.trim() === "" && r.percent.trim() === "")
-            }
-            onClick={() => void save()}
-          >
-            Create pay run
-          </Button>
-        </DialogFooter>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={
+                filled.length === 0 ||
+                filled.some((r) => r.tax.trim() === "" && r.percent.trim() === "")
+              }
+              type="submit"
+            >
+              Create pay run
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

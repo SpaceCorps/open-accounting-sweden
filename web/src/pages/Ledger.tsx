@@ -111,96 +111,106 @@ function NewDraftDialog({
             Debit and credit must balance. Posting happens only when an admin approves the draft.
           </DialogDescription>
         </DialogHeader>
-        <DialogBody>
-          <div className="oas-form">
-            <div className="oas-form-row">
-              <TextField label="Event date" type="date" value={date} onChange={setDate} />
-              <TextField label="Description" value={description} onChange={setDescription} />
-              <TextField label="Counterparty" value={counterparty} onChange={setCounterparty} />
-            </div>
+        <form
+          className="oas-dialog-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          <DialogBody>
             <div className="oas-form">
-              <div className="oas-lines oas-muted">
-                <span>Account</span>
-                <span>Debit</span>
-                <span>Credit</span>
-                <span>VAT code</span>
-                <span />
+              <div className="oas-form-row">
+                <TextField label="Event date" type="date" value={date} onChange={setDate} />
+                <TextField label="Description" value={description} onChange={setDescription} />
+                <TextField label="Counterparty" value={counterparty} onChange={setCounterparty} />
               </div>
-              {lines.map((l, i) => (
-                <div className="oas-lines" key={i}>
-                  <Select value={l.account} onValueChange={(v) => set(i, { account: v })}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Choose account" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {accounts.map((a) => (
-                        <SelectItem key={a.number} value={String(a.number)}>
-                          {a.number} {a.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Input
-                    inputMode="decimal"
-                    value={l.debit}
-                    onChange={(e) => set(i, { debit: e.target.value, credit: "" })}
-                    placeholder="0.00"
-                  />
-                  <Input
-                    inputMode="decimal"
-                    value={l.credit}
-                    onChange={(e) => set(i, { credit: e.target.value, debit: "" })}
-                    placeholder="0.00"
-                  />
-                  <VatCodeSelect
-                    value={l.vat}
-                    onChange={(v) => set(i, { vat: v })}
-                    codes={vatCfg.data?.codes ?? []}
-                  />
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label="Remove line"
-                    disabled={lines.length <= 2}
-                    onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}
-                  >
-                    <Trash2 />
-                  </Button>
+              <div className="oas-form">
+                <div className="oas-lines oas-muted">
+                  <span>Account</span>
+                  <span>Debit</span>
+                  <span>Credit</span>
+                  <span>VAT code</span>
+                  <span />
                 </div>
-              ))}
-              <div className="oas-actions">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    setLines((ls) => [...ls, { account: "", debit: "", credit: "", vat: "" }])
-                  }
-                >
-                  <Plus /> Add line
-                </Button>
-                <Badge variant={balanced ? "success" : "warning"}>
-                  debit {amount(debit)} / credit {amount(credit)}{" "}
-                  {balanced ? "balanced" : "not balanced"}
-                </Badge>
+                {lines.map((l, i) => (
+                  <div className="oas-lines" key={i}>
+                    <Select value={l.account} onValueChange={(v) => set(i, { account: v })}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Choose account" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {accounts.map((a) => (
+                          <SelectItem key={a.number} value={String(a.number)}>
+                            {a.number} {a.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      inputMode="decimal"
+                      value={l.debit}
+                      onChange={(e) => set(i, { debit: e.target.value, credit: "" })}
+                      placeholder="0.00"
+                    />
+                    <Input
+                      inputMode="decimal"
+                      value={l.credit}
+                      onChange={(e) => set(i, { credit: e.target.value, debit: "" })}
+                      placeholder="0.00"
+                    />
+                    <VatCodeSelect
+                      value={l.vat}
+                      onChange={(v) => set(i, { vat: v })}
+                      codes={vatCfg.data?.codes ?? []}
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Remove line"
+                      disabled={lines.length <= 2}
+                      onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}
+                    >
+                      <Trash2 />
+                    </Button>
+                  </div>
+                ))}
+                <div className="oas-actions">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setLines((ls) => [...ls, { account: "", debit: "", credit: "", vat: "" }])
+                    }
+                  >
+                    <Plus /> Add line
+                  </Button>
+                  <Badge variant={balanced ? "success" : "warning"}>
+                    debit {amount(debit)} / credit {amount(credit)}{" "}
+                    {balanced ? "balanced" : "not balanced"}
+                  </Badge>
+                </div>
               </div>
             </div>
-          </div>
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button
-            disabled={
-              !balanced ||
-              !description.trim() ||
-              lines.some((l) => (num(l.debit) > 0 || num(l.credit) > 0) && !l.account)
-            }
-            onClick={() => void save()}
-          >
-            Propose draft
-          </Button>
-        </DialogFooter>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={
+                !balanced ||
+                !description.trim() ||
+                lines.some((l) => (num(l.debit) > 0 || num(l.credit) > 0) && !l.account)
+              }
+              type="submit"
+            >
+              Propose draft
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -237,33 +247,41 @@ function NewAccountDialog({
           <DialogTitle>Add account</DialogTitle>
           <DialogDescription>Use BAS account numbers (1000-9999).</DialogDescription>
         </DialogHeader>
-        <DialogBody>
-          <div className="oas-form">
-            <TextField label="Number" value={number} onChange={setNumber} placeholder="6540" />
-            <TextField label="Name" value={name} onChange={setName} />
-            <Field label="Type">
-              <Select value={kind} onValueChange={setKind}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="T">Asset</SelectItem>
-                  <SelectItem value="S">Liability or equity</SelectItem>
-                  <SelectItem value="K">Cost</SelectItem>
-                  <SelectItem value="I">Income</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-          </div>
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button disabled={!number || !name.trim()} onClick={() => void save()}>
-            Add
-          </Button>
-        </DialogFooter>
+        <form
+          className="oas-dialog-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          <DialogBody>
+            <div className="oas-form">
+              <TextField label="Number" value={number} onChange={setNumber} placeholder="6540" />
+              <TextField label="Name" value={name} onChange={setName} />
+              <Field label="Type">
+                <Select value={kind} onValueChange={setKind}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="T">Asset</SelectItem>
+                    <SelectItem value="S">Liability or equity</SelectItem>
+                    <SelectItem value="K">Cost</SelectItem>
+                    <SelectItem value="I">Income</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+            </div>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button disabled={!number || !name.trim()} type="submit">
+              Add
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

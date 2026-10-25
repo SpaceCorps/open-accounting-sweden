@@ -120,89 +120,102 @@ function LogTimeDialog(props: {
             Times are in Europe/Stockholm.
           </DialogDescription>
         </DialogHeader>
-        <DialogBody>
-          <div className="oas-form">
-            <div className="oas-form-row">
-              <Field label="Activity">
-                <Select value={activity} onValueChange={setActivity}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {props.activities.map((a) => (
-                      <SelectItem key={a.name} value={a.name}>
-                        {a.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label="Project" hint="Type a name; unknown names offer to create a project.">
-                <Input
-                  list="oas-projects"
-                  value={project}
-                  onChange={(e) => {
-                    setProject(e.target.value);
-                    setSuggest(null);
-                  }}
-                  placeholder="Project"
-                />
-                <datalist id="oas-projects">
-                  {props.projects
-                    .filter((p) => !p.archived)
-                    .map((p) => (
-                      <option key={p.id} value={p.name} />
-                    ))}
-                </datalist>
-              </Field>
-            </div>
-            {props.mode === "log" ? (
+        <form
+          className="oas-dialog-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submit(project, false);
+          }}
+        >
+          <DialogBody>
+            <div className="oas-form">
               <div className="oas-form-row">
-                <TextField label="Date" type="date" value={date} onChange={setDate} />
-                <TextField label="From" type="time" value={from} onChange={setFrom} />
-                <TextField label="To" type="time" value={to} onChange={setTo} />
+                <Field label="Activity">
+                  <Select value={activity} onValueChange={setActivity}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {props.activities.map((a) => (
+                        <SelectItem key={a.name} value={a.name}>
+                          {a.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label="Project" hint="Type a name; unknown names offer to create a project.">
+                  <Input
+                    list="oas-projects"
+                    value={project}
+                    onChange={(e) => {
+                      setProject(e.target.value);
+                      setSuggest(null);
+                    }}
+                    placeholder="Project"
+                  />
+                  <datalist id="oas-projects">
+                    {props.projects
+                      .filter((p) => !p.archived)
+                      .map((p) => (
+                        <option key={p.id} value={p.name} />
+                      ))}
+                  </datalist>
+                </Field>
               </div>
-            ) : null}
-            <TextField
-              label="Message"
-              value={message}
-              onChange={setMessage}
-              placeholder="Optional, defaults to the activity template"
-            />
-            {suggest ? (
-              <div className="oas-banner">
-                <span>No project named "{suggest.typed}".</span>
-                <span className="oas-actions">
-                  {suggest.options.map((o) => (
+              {props.mode === "log" ? (
+                <div className="oas-form-row">
+                  <TextField label="Date" type="date" value={date} onChange={setDate} />
+                  <TextField label="From" type="time" value={from} onChange={setFrom} />
+                  <TextField label="To" type="time" value={to} onChange={setTo} />
+                </div>
+              ) : null}
+              <TextField
+                label="Message"
+                value={message}
+                onChange={setMessage}
+                placeholder="Optional, defaults to the activity template"
+              />
+              {suggest ? (
+                <div className="oas-banner">
+                  <span>No project named "{suggest.typed}".</span>
+                  <span className="oas-actions">
+                    {suggest.options.map((o) => (
+                      <Button
+                        type="button"
+                        key={o}
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setProject(o);
+                          void submit(o, false);
+                        }}
+                      >
+                        Use {o}
+                      </Button>
+                    ))}
                     <Button
-                      key={o}
+                      type="button"
                       size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        setProject(o);
-                        void submit(o, false);
-                      }}
+                      onClick={() => void submit(suggest.typed, true)}
                     >
-                      Use {o}
+                      Create "{suggest.typed}"
                     </Button>
-                  ))}
-                  <Button size="sm" onClick={() => void submit(suggest.typed, true)}>
-                    Create "{suggest.typed}"
-                  </Button>
-                </span>
-              </div>
-            ) : null}
-            {error ? <p className="oas-error">{error}</p> : null}
-          </div>
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => props.onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button disabled={busy || !project.trim()} onClick={() => void submit(project, false)}>
-            {props.mode === "log" ? "Log time" : "Start"}
-          </Button>
-        </DialogFooter>
+                  </span>
+                </div>
+              ) : null}
+              {error ? <p className="oas-error">{error}</p> : null}
+            </div>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button disabled={busy || !project.trim()} type="submit">
+              {props.mode === "log" ? "Log time" : "Start"}
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -305,39 +318,44 @@ function NewProjectDialog({
             Aliases are other names that should match this project when you log time.
           </DialogDescription>
         </DialogHeader>
-        <DialogBody>
-          <div className="oas-form">
-            <TextField label="Name" value={name} onChange={setName} />
-            <TextField label="Client" value={client} onChange={setClient} />
-            <TextField
-              label="Aliases"
-              value={aliases}
-              onChange={setAliases}
-              hint="Comma separated"
-            />
-            {canSetRate ? (
-              <RateFields
-                type={rateType}
-                amount={rate}
-                currency={currency}
-                onType={setRateType}
-                onAmount={setRate}
-                onCurrency={setCurrency}
+        <form
+          className="oas-dialog-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          <DialogBody>
+            <div className="oas-form">
+              <TextField label="Name" value={name} onChange={setName} />
+              <TextField label="Client" value={client} onChange={setClient} />
+              <TextField
+                label="Aliases"
+                value={aliases}
+                onChange={setAliases}
+                hint="Comma separated"
               />
-            ) : null}
-          </div>
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button
-            disabled={!name.trim() || (rateType !== "none" && !rate.trim())}
-            onClick={() => void save()}
-          >
-            Create
-          </Button>
-        </DialogFooter>
+              {canSetRate ? (
+                <RateFields
+                  type={rateType}
+                  amount={rate}
+                  currency={currency}
+                  onType={setRateType}
+                  onAmount={setRate}
+                  onCurrency={setCurrency}
+                />
+              ) : null}
+            </div>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button disabled={!name.trim() || (rateType !== "none" && !rate.trim())} type="submit">
+              Create
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -386,26 +404,34 @@ function RateDialog({
             Changing it applies to all entries, including past ones.
           </DialogDescription>
         </DialogHeader>
-        <DialogBody>
-          <div className="oas-form">
-            <RateFields
-              type={type}
-              amount={amount}
-              currency={currency}
-              onType={setType}
-              onAmount={setAmount}
-              onCurrency={setCurrency}
-            />
-          </div>
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button disabled={type !== "none" && !amount.trim()} onClick={() => void save()}>
-            Save
-          </Button>
-        </DialogFooter>
+        <form
+          className="oas-dialog-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          <DialogBody>
+            <div className="oas-form">
+              <RateFields
+                type={type}
+                amount={amount}
+                currency={currency}
+                onType={setType}
+                onAmount={setAmount}
+                onCurrency={setCurrency}
+              />
+            </div>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button disabled={type !== "none" && !amount.trim()} type="submit">
+              Save
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -448,17 +474,25 @@ function EditMessageDialog({
               : ""}
           </DialogDescription>
         </DialogHeader>
-        <DialogBody>
-          <div className="oas-form">
-            <TextField label="Message" value={message} onChange={setMessage} />
-          </div>
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button onClick={() => void save()}>Save</Button>
-        </DialogFooter>
+        <form
+          className="oas-dialog-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          <DialogBody>
+            <div className="oas-form">
+              <TextField label="Message" value={message} onChange={setMessage} />
+            </div>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit">Save</Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -497,30 +531,38 @@ function NewActivityDialog({
             template.
           </DialogDescription>
         </DialogHeader>
-        <DialogBody>
-          <div className="oas-form">
-            <TextField
-              label="Name"
-              value={name}
-              onChange={setName}
-              placeholder="meeting, building, strategizing..."
-            />
-            <TextField
-              label="Message template"
-              value={message}
-              onChange={setMessage}
-              placeholder="Meeting: {topic}"
-            />
-          </div>
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button disabled={!name.trim()} onClick={() => void save()}>
-            Save
-          </Button>
-        </DialogFooter>
+        <form
+          className="oas-dialog-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          <DialogBody>
+            <div className="oas-form">
+              <TextField
+                label="Name"
+                value={name}
+                onChange={setName}
+                placeholder="meeting, building, strategizing..."
+              />
+              <TextField
+                label="Message template"
+                value={message}
+                onChange={setMessage}
+                placeholder="Meeting: {topic}"
+              />
+            </div>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button disabled={!name.trim()} type="submit">
+              Save
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

@@ -73,23 +73,36 @@ function EditDialog({
             never changes.
           </DialogDescription>
         </DialogHeader>
-        <DialogBody>
-          <div className="oas-form">
-            <TextField label="Vendor" value={vendor} onChange={setVendor} />
-            <div className="oas-form-row">
-              <TextField label="Amount" value={amount} onChange={setAmount} placeholder="1250.00" />
-              <TextField label="Currency" value={currency} onChange={setCurrency} />
-              <TextField label="Receipt date" type="date" value={date} onChange={setDate} />
+        <form
+          className="oas-dialog-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          <DialogBody>
+            <div className="oas-form">
+              <TextField label="Vendor" value={vendor} onChange={setVendor} />
+              <div className="oas-form-row">
+                <TextField
+                  label="Amount"
+                  value={amount}
+                  onChange={setAmount}
+                  placeholder="1250.00"
+                />
+                <TextField label="Currency" value={currency} onChange={setCurrency} />
+                <TextField label="Receipt date" type="date" value={date} onChange={setDate} />
+              </div>
+              <TextField label="Notes" value={notes} onChange={setNotes} />
             </div>
-            <TextField label="Notes" value={notes} onChange={setNotes} />
-          </div>
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button onClick={() => void save()}>Save</Button>
-        </DialogFooter>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit">Save</Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

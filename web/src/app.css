@@ -117,6 +117,10 @@ body {
   flex-direction: column;
   gap: 0.375rem;
 }
+/* A dialog's form must not change the dialog layout; it only adds Enter-to-submit. */
+.oas-dialog-form {
+  display: contents;
+}
 .oas-form {
   display: flex;
   flex-direction: column;

@@ -107,7 +107,14 @@ function CompanySection({ canEdit }: { canEdit: boolean }) {
       title="Company"
       description="Used in the SIE export header, the AGI file and your invoices."
     >
-      <div className="oas-form" style={{ maxWidth: 420 }}>
+      <form
+        className="oas-form"
+        style={{ maxWidth: 420 }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
         <TextField label="Company name" value={name} onChange={setName} />
         <TextField
           label="Organisation number"
@@ -146,12 +153,12 @@ function CompanySection({ canEdit }: { canEdit: boolean }) {
           <span>Approved for F-tax (printed on invoices)</span>
         </label>
         <div>
-          <Button disabled={!canEdit || !name.trim()} onClick={() => void save()}>
+          <Button disabled={!canEdit || !name.trim()} type="submit">
             Save
           </Button>
         </div>
         {!canEdit ? <p className="oas-muted">Only an admin can change company details.</p> : null}
-      </div>
+      </form>
     </Section>
   );
 }
@@ -174,7 +181,14 @@ function PasswordSection() {
   }
   return (
     <Section title="Password" description="At least 12 characters.">
-      <div className="oas-form" style={{ maxWidth: 420 }}>
+      <form
+        className="oas-form"
+        style={{ maxWidth: 420 }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
         <TextField
           label="Current password"
           type="password"
@@ -197,11 +211,11 @@ function PasswordSection() {
           autoComplete="new-password"
         />
         <div>
-          <Button disabled={!current || next.length < 12} onClick={() => void save()}>
+          <Button disabled={!current || next.length < 12} type="submit">
             Change password
           </Button>
         </div>
-      </div>
+      </form>
     </Section>
   );
 }
@@ -381,46 +395,51 @@ function UsersSection() {
               Create an agent user for each agent so it can get its own permanent token.
             </DialogDescription>
           </DialogHeader>
-          <DialogBody>
-            <div className="oas-form">
-              <TextField
-                label="Username"
-                value={username}
-                onChange={setUsername}
-                autoComplete="off"
-              />
-              <TextField
-                label="Password"
-                type="password"
-                value={password}
-                onChange={setPassword}
-                autoComplete="new-password"
-                hint="At least 12 characters"
-              />
-              <Field label="Role">
-                <Select value={role} onValueChange={setRole}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="admin">admin</SelectItem>
-                    <SelectItem value="agent">agent</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
-            </div>
-          </DialogBody>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              disabled={username.length < 3 || password.length < 12}
-              onClick={() => void save()}
-            >
-              Add user
-            </Button>
-          </DialogFooter>
+          <form
+            className="oas-dialog-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void save();
+            }}
+          >
+            <DialogBody>
+              <div className="oas-form">
+                <TextField
+                  label="Username"
+                  value={username}
+                  onChange={setUsername}
+                  autoComplete="off"
+                />
+                <TextField
+                  label="Password"
+                  type="password"
+                  value={password}
+                  onChange={setPassword}
+                  autoComplete="new-password"
+                  hint="At least 12 characters"
+                />
+                <Field label="Role">
+                  <Select value={role} onValueChange={setRole}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="admin">admin</SelectItem>
+                      <SelectItem value="agent">agent</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              </div>
+            </DialogBody>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+                Cancel
+              </Button>
+              <Button disabled={username.length < 3 || password.length < 12} type="submit">
+                Add user
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </Section>
