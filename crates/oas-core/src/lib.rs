@@ -89,7 +89,7 @@ pub fn match_project(projects: &[Project], query: &str) -> Match {
             .collect()
     };
     for (i, p) in projects.iter().enumerate() {
-        if !p.archived && names(p).iter().any(|n| *n == q) {
+        if !p.archived && names(p).contains(&q) {
             return Match::Exact(i);
         }
     }
@@ -530,7 +530,7 @@ pub fn parse_personnummer(input: &str) -> Result<(String, i32), String> {
             if v > 9 { v - 9 } else { v }
         })
         .sum();
-    if sum % 10 != 0 {
+    if !sum.is_multiple_of(10) {
         return Err("identity fails the check digit test".into());
     }
     Ok((digits, year))

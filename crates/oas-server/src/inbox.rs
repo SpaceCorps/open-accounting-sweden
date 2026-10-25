@@ -287,10 +287,7 @@ pub async fn upload_document(
     let amount = opt_amount(&q.amount)?;
     let cur = currency(&q.currency)?;
     let date = opt_date(&q.date)?;
-    let source = match q.source.as_deref() {
-        Some(s @ ("web" | "cli" | "agent")) => s,
-        _ => "api",
-    };
+    let source = q.source.as_deref().unwrap_or("api");
     let sha = format!("{:x}", Sha256::digest(&body));
     let conn = st.conn.lock().unwrap();
     let existing: Option<i64> = conn

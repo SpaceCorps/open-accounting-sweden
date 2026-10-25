@@ -1101,11 +1101,11 @@ async fn main() {
     let agent_token = std::env::var("OAS_AGENT_TOKEN")
         .ok()
         .filter(|t| !t.is_empty());
-    if let Some(t) = &agent_token {
-        if t.len() < 24 || *t == token {
-            eprintln!("OAS_AGENT_TOKEN must be at least 24 characters and differ from OAS_TOKEN");
-            std::process::exit(2);
-        }
+    if let Some(t) = &agent_token
+        && (t.len() < 24 || *t == token)
+    {
+        eprintln!("OAS_AGENT_TOKEN must be at least 24 characters and differ from OAS_TOKEN");
+        std::process::exit(2);
     }
     // Receipts live next to the database unless OAS_DATA_DIR says otherwise.
     let data_dir = std::env::var("OAS_DATA_DIR")

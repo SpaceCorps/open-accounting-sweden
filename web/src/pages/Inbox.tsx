@@ -23,7 +23,6 @@ import { api, download, uploadDocument, type Doc } from "../api";
 import { useData } from "../hooks";
 import {
   EmptyNote,
-  Field,
   Kpi,
   PageHeader,
   Section,

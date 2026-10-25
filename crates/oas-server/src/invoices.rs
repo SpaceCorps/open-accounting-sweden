@@ -432,6 +432,10 @@ fn totals(lines: &[(String, i64, String, i64)], vat_rate: i64) -> Totals {
     }
 }
 
+#[expect(
+    clippy::type_complexity,
+    reason = "one tuple per SQL row keeps the column order next to the query"
+)]
 fn invoice_json(conn: &Connection, id: i64) -> Result<Value, ApiError> {
     let (series, number, customer_id, status, issue, due, service, currency, vat_rate, notes, created_by, issued_by, issued_at, draft): (
         String, Option<i64>, i64, String, String, String, Option<String>, String, i64, String, String, Option<String>, Option<String>, Option<i64>,

@@ -418,6 +418,10 @@ fn voucher_view(conn: &Connection, id: i64) -> Result<Value, ApiError> {
     Ok(v)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "every hashed field is spelled out so the hash input is easy to audit"
+)]
 fn canonical(
     prev_hash: &str,
     series: &str,
@@ -984,6 +988,10 @@ fn year_bounds(q: &Range) -> (Option<String>, Option<String>) {
     (q.from.clone(), q.to.clone())
 }
 
+#[expect(
+    clippy::type_complexity,
+    reason = "one tuple per SQL row keeps the column order next to the query"
+)]
 pub async fn verify(State(st): State<Shared>) -> ApiResult {
     let conn = st.conn.lock().unwrap();
     let mut issues: Vec<String> = vec![];

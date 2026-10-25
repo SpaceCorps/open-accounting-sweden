@@ -413,6 +413,10 @@ fn current_quarter() -> String {
     format!("{}-Q{}", d.year(), (d.month() - 1) / 3 + 1)
 }
 
+#[expect(
+    clippy::type_complexity,
+    reason = "one tuple per SQL row keeps the column order next to the query"
+)]
 pub async fn report(State(st): State<Shared>, Query(q): Query<ReportQuery>) -> ApiResult {
     let conn = st.conn.lock().unwrap();
     let quarter = q.quarter.unwrap_or_else(current_quarter);

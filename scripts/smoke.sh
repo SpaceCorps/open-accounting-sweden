@@ -3,18 +3,24 @@
 # Usage: scripts/smoke.sh   (builds the workspace, starts a server on 127.0.0.1:18999, checks the rules)
 set -u
 cd "$(dirname "$0")/.."
+# A missing tool must stop the run here, not make a check pass or fail for the wrong reason.
+for tool in cargo curl sqlite3 python3; do
+  command -v $tool >/dev/null 2>&1 || { echo "smoke.sh needs $tool on PATH"; exit 1; }
+done
 cargo build --workspace -q || exit 1
 T=$(mktemp -d)
 ADMIN="smoke-admin-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 AGENT="smoke-agent-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 OAS_TOKEN=$ADMIN OAS_AGENT_TOKEN=$AGENT OAS_DB=$T/s.db OAS_BIND=127.0.0.1:18999 ./target/debug/oas-server 2>$T/server.log &
 SERVER=$!
-trap 'kill $SERVER 2>/dev/null; rm -rf "$T"' EXIT
+trap 'kill $SERVER 2>/dev/null; wait $SERVER 2>/dev/null; rm -rf "$T"' EXIT
 for _ in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:18999/health && break; sleep 1; done
 O=./target/debug/oas; U=http://127.0.0.1:18999
 FAIL=0
 ok()   { echo "ok    $1"; }
 bad()  { echo "FAIL  $1"; FAIL=1; }
+# The database itself must refuse the statement with the named trigger message, not just any error.
+refused(){ sqlite3 "$T/s.db" "$1" 2>&1 | grep -q "$2"; }
 check(){ if eval "$2" >/dev/null 2>&1; then ok "$1"; else bad "$1"; fi; }
 admin(){ OAS_CONFIG_DIR=$T/adm "$O" "$@" </dev/null; }
 agent(){ OAS_CONFIG_DIR=$T/agt "$O" "$@" </dev/null; }
@@ -28,8 +34,8 @@ check "admin approves a draft" 'admin voucher approve 1'
 check "unbalanced voucher is rejected" '! admin voucher propose --date 2026-07-16 --description x --debit 6540=10 --credit 1930=9'
 check "unknown VAT code is rejected" '! admin voucher propose --date 2026-07-16 --description x --debit 6540=10@NOPE --credit 1930=10'
 check "ledger verifies" 'admin ledger verify'
-check "posted entry cannot be edited" '! sqlite3 $T/s.db "UPDATE entry SET debit = 1"'
-check "posted voucher cannot be deleted" '! sqlite3 $T/s.db "DELETE FROM voucher"'
+check "posted entry cannot be edited" 'refused "UPDATE entry SET debit = 1" "ledger is append-only"'
+check "posted voucher cannot be deleted" 'refused "DELETE FROM voucher" "ledger is append-only"'
 check "VAT box 21 holds the reverse charge base" 'admin --json vat report --quarter 2026-Q3 | python3 -c "import sys,json; d=json.load(sys.stdin); b={x[\"box\"]:x[\"amount\"] for x in d[\"boxes\"]}; sys.exit(0 if b[\"21\"]==\"1000.00\" and b[\"30\"]==\"250.00\" and b[\"48\"]==\"250.00\" else 1)"'
 check "a box marked not used fails the report if an amount lands in it" 'admin vat box-not-used 21 >/dev/null && admin --json vat report --quarter 2026-Q3 | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if any(c[\"check\"].startswith(\"no amount in a box marked not used\") and not c[\"ok\"] for c in d[\"checks\"]) else 1)" && admin vat box-not-used 21 --used >/dev/null'
 check "a voucher can be corrected once" 'admin voucher correct 1 && ! admin voucher correct 1'
@@ -54,7 +60,7 @@ check "the same hours cannot be invoiced twice" '! admin invoice from-time --cus
 check "an agent cannot issue an invoice" '! agent invoice issue 1'
 check "a customer without an address blocks issuing" 'admin invoice create --customer "Utan Adress AB" --line "Konsult|1|st|100" >/dev/null && ! admin invoice issue 2'
 check "issuing numbers the invoice F1 and proposes a voucher" 'admin --json invoice issue 1 | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d[\"invoice\"][\"label\"]==\"F1\" and d[\"invoice\"][\"status\"]==\"issued\" and d[\"invoice\"][\"ledger_draft_id\"] else 1)"'
-check "an issued invoice cannot be edited or deleted" '! sqlite3 $T/s.db "UPDATE invoice SET due_date = \"2030-01-01\" WHERE id = 1" && ! admin invoice delete 1'
+check "an issued invoice cannot be edited or deleted" 'refused "UPDATE invoice SET due_date = \"2030-01-01\" WHERE id = 1" "an issued invoice cannot be changed" && ! admin invoice delete 1'
 check "the printable invoice has the required fields" 'admin invoice html 1 --out $T/inv.html >/dev/null && grep -q "Invoice F1" $T/inv.html && grep -q "VAT no: SE5560269986" $T/inv.html && grep -q "Kund AB" $T/inv.html && grep -q "225.00" $T/inv.html'
 check "customer names cannot inject markup into the invoice" 'admin customer add "<script>x</script> AB" --address "Gatan 1" >/dev/null && admin invoice create --customer "<script>x</script> AB" --line "x|1|st|1" >/dev/null && admin invoice html 3 --out $T/inv2.html >/dev/null && ! grep -q "<script>x" $T/inv2.html'
 check "foreign customers are refused for now" '! admin customer add "Foreign Ltd" --country DE --address "Strasse 1" >/dev/null || ! admin invoice create --customer "Foreign Ltd" --line "x|1|st|1"'
@@ -66,7 +72,7 @@ check "bank CSV re-import adds nothing" 'admin --json bank import $T/b.csv | pyt
 check "receipt uploads and duplicates are detected" 'admin doc add $T/r.txt --vendor GitHub --amount 40 --date 2026-10-21 >/dev/null && admin --json doc add $T/r.txt | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin)[\"document\"][\"duplicate\"] else 1)"'
 check "a receipt matches its bank line" 'admin --json match list | python3 -c "import sys,json; sys.exit(0 if len(json.load(sys.stdin)[\"matches\"])==1 else 1)"'
 check "agent cannot confirm a match" '! agent match confirm 1'
-check "receipts cannot be edited" '! sqlite3 $T/s.db "UPDATE document SET filename = \"x\""'
+check "receipts cannot be edited" 'refused "UPDATE document SET filename = \"x\"" "receipts are immutable"'
 
 check "an agent cannot add an employee" '! agent employee add Anna --identity 200407204567'
 check "a bad personnummer is rejected" '! admin employee add Bad --identity 198503141234'
