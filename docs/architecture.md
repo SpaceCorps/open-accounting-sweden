@@ -67,27 +67,33 @@ Each filing pack is a folder of generated files plus a checklist of numbers and 
 | INK2 | `info.sru`, `blanketter.sru` | Signed afterwards in Mina sidor. |
 | Annual report | iXBRL file against the Swedish taxonomy | BankID signatures by board. Bolagsverket route is an open question. |
 
-## CLI sketch
+## CLI
+
+The CLI that exists today (run `oas agent-readme` for every flag):
 
 ```
-oas auth login <instance-url>      # BankID or token-based login, stored in the OS keystore
-oas inbox add <file>               # upload a receipt or invoice
-oas voucher propose --json         # agents create drafts
-oas voucher approve <id>           # human only
-oas vat pack --period 2026-Q4
-oas agi pack --month 2026-11
-oas year pack --year 2026
-oas deadlines --next 30d
+oas auth login <instance-url> [--token | --username]   # username and password, or a token
 oas time log --activity meeting --project acme --date 2026-10-21 --from 11:00 --to 12:00
 oas time start --activity building --project acme
 oas time stop
 oas time report --week [--project acme] [--activity meeting]
-oas time export --from 2026-10-01 --to 2026-10-31 --format csv
-oas project add "Acme" --alias acme
-oas project list
-oas activity add strategizing --message "Strategy: {topic}"
+oas time export --from 2026-10-01 --to 2026-10-31
+oas project add "Acme" --alias acme --hourly 1150
+oas doc add receipt.pdf --vendor GitHub --amount 48 --date 2026-10-20   # receipts inbox
+oas bank import statement.csv && oas match list && oas bank book <id> ...
+oas voucher propose --date ... --debit 6540=1000 --credit 1930=1000      # agents create drafts
+oas voucher approve <id>                                                # humans only
+oas ledger verify
+oas export sie --year 2026
+oas vat report --quarter 2026-Q3
+oas payroll run --period 2026-10 --pay-date 2026-10-25 --line 1=46000:31%
+oas payroll agi <run-id>
+oas invoice from-time --customer "Acme AB" --project acme --from ... --to ...
+oas income
 oas agent-readme [--json]
 ```
+
+Not built yet: `oas year pack` (closing, K2, SRU, iXBRL) and `oas deadlines`.
 
 Conventions follow the other SpaceCorps CLIs: multi-account `--account`, YAML by default, `--json`, structured error envelope on stderr with stable exit codes, no empty stdout.
 
@@ -116,7 +122,7 @@ Working hours are a separate module. They are not part of the statutory bookkeep
 
 ## Deployment
 
-One container with the server and its SQLite file on a volume (`/data`), deployable on Sliplane or any host. The MVP runs this way on the SpaceCorps Sliplane account, built from the repository's `Dockerfile` and protected by a bearer token (`OAS_TOKEN`). Document storage and separate backups come with the ledger. Retention is seven years after the financial year, and the system must keep a way to print or read records for the whole period.
+One container with the server and its SQLite file on a volume (`/data`), deployable on Sliplane or any host. The MVP runs this way on the SpaceCorps Sliplane account, built from the repository's `Dockerfile`. People sign in with a username and password; `OAS_TOKEN` is only the bootstrap admin token used to create the first account. Document storage and separate backups come with the ledger. Retention is seven years after the financial year, and the system must keep a way to print or read records for the whole period.
 
 ## Lessons from Midday
 

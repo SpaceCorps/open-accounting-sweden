@@ -1080,53 +1080,8 @@ async fn export_csv(
         .into_response())
 }
 
-#[tokio::main]
-async fn main() {
-    let token = std::env::var("OAS_TOKEN").unwrap_or_default();
-    if token.len() < 24 {
-        eprintln!("OAS_TOKEN must be set to a secret of at least 24 characters");
-        std::process::exit(2);
-    }
-    let db_path = std::env::var("OAS_DB").unwrap_or_else(|_| "oas.db".into());
-    let conn = open_db(&db_path).unwrap_or_else(|e| {
-        eprintln!("cannot open database {db_path}: {e}");
-        std::process::exit(1);
-    });
-    let bind = std::env::var("OAS_BIND").unwrap_or_else(|_| {
-        format!(
-            "0.0.0.0:{}",
-            std::env::var("PORT").unwrap_or_else(|_| "8080".into())
-        )
-    });
-    let agent_token = std::env::var("OAS_AGENT_TOKEN")
-        .ok()
-        .filter(|t| !t.is_empty());
-    if let Some(t) = &agent_token
-        && (t.len() < 24 || *t == token)
-    {
-        eprintln!("OAS_AGENT_TOKEN must be at least 24 characters and differ from OAS_TOKEN");
-        std::process::exit(2);
-    }
-    // Receipts live next to the database unless OAS_DATA_DIR says otherwise.
-    let data_dir = std::env::var("OAS_DATA_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| {
-            std::path::Path::new(&db_path)
-                .parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_default()
-        });
-    let docs_dir = data_dir.join("documents");
-    let dummy_hash = auth::hash_password("dummy password used only for timing").unwrap_or_default();
-    let state: Shared = Arc::new(AppState {
-        conn: Mutex::new(conn),
-        token,
-        agent_token,
-        limiter: auth::Limiter::default(),
-        dummy_hash,
-        docs_dir,
-    });
-
+/// The whole HTTP app: the API under /api, health, login, and the web app or fallback page.
+fn router(state: Shared, web_dir: Option<&str>) -> Router {
     let api = Router::new()
         .route("/activities", get(list_activities).post(add_activity))
         .route("/projects", get(list_projects).post(add_project))
@@ -1217,10 +1172,6 @@ async fn main() {
         .layer(DefaultBodyLimit::max(26 * 1024 * 1024))
         .layer(middleware::from_fn_with_state(state.clone(), auth));
 
-    // OAS_WEB_DIR points at the built web app (web/dist). Without it a small fallback page is served.
-    let web_dir = std::env::var("OAS_WEB_DIR")
-        .ok()
-        .filter(|d| std::path::Path::new(d).join("index.html").is_file());
     let has_ui = web_dir.is_some();
     let mut app = Router::new()
         .route("/health", get(health))
@@ -1236,9 +1187,62 @@ async fn main() {
         }
         None => app.route("/", get(web)),
     };
-    let app = app
-        .layer(middleware::from_fn_with_state(has_ui, security_headers))
-        .with_state(state);
+    app.layer(middleware::from_fn_with_state(has_ui, security_headers))
+        .with_state(state)
+}
+
+#[tokio::main]
+async fn main() {
+    let token = std::env::var("OAS_TOKEN").unwrap_or_default();
+    if token.len() < 24 {
+        eprintln!("OAS_TOKEN must be set to a secret of at least 24 characters");
+        std::process::exit(2);
+    }
+    let db_path = std::env::var("OAS_DB").unwrap_or_else(|_| "oas.db".into());
+    let conn = open_db(&db_path).unwrap_or_else(|e| {
+        eprintln!("cannot open database {db_path}: {e}");
+        std::process::exit(1);
+    });
+    let bind = std::env::var("OAS_BIND").unwrap_or_else(|_| {
+        format!(
+            "0.0.0.0:{}",
+            std::env::var("PORT").unwrap_or_else(|_| "8080".into())
+        )
+    });
+    let agent_token = std::env::var("OAS_AGENT_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty());
+    if let Some(t) = &agent_token
+        && (t.len() < 24 || *t == token)
+    {
+        eprintln!("OAS_AGENT_TOKEN must be at least 24 characters and differ from OAS_TOKEN");
+        std::process::exit(2);
+    }
+    // Receipts live next to the database unless OAS_DATA_DIR says otherwise.
+    let data_dir = std::env::var("OAS_DATA_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::path::Path::new(&db_path)
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_default()
+        });
+    let docs_dir = data_dir.join("documents");
+    let dummy_hash = auth::hash_password("dummy password used only for timing").unwrap_or_default();
+    let state: Shared = Arc::new(AppState {
+        conn: Mutex::new(conn),
+        token,
+        agent_token,
+        limiter: auth::Limiter::default(),
+        dummy_hash,
+        docs_dir,
+    });
+
+    // OAS_WEB_DIR points at the built web app (web/dist). Without it a small fallback page is served.
+    let web_dir = std::env::var("OAS_WEB_DIR")
+        .ok()
+        .filter(|d| std::path::Path::new(d).join("index.html").is_file());
+    let app = router(state, web_dir.as_deref());
 
     let listener = tokio::net::TcpListener::bind(&bind)
         .await
@@ -1256,4 +1260,237 @@ async fn main() {
         })
         .await
         .unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    //! API tests against an in-memory database, through the same router the server runs.
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    const ADMIN: &str = "test-admin-token-0123456789abcdef";
+    const AGENT: &str = "test-agent-token-0123456789abcdef";
+
+    fn app() -> Router {
+        let state: Shared = Arc::new(AppState {
+            conn: Mutex::new(open_db(":memory:").unwrap()),
+            token: ADMIN.into(),
+            agent_token: Some(AGENT.into()),
+            limiter: auth::Limiter::default(),
+            dummy_hash: auth::hash_password("dummy").unwrap(),
+            docs_dir: std::env::temp_dir().join("oas-server-tests"),
+        });
+        router(state, None)
+    }
+
+    async fn call(
+        app: &Router,
+        token: Option<&str>,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+    ) -> (u16, Value) {
+        let mut req = Request::builder().method(method).uri(path);
+        if let Some(t) = token {
+            req = req.header(header::AUTHORIZATION, format!("Bearer {t}"));
+        }
+        let req = match body {
+            Some(b) => req
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(b.to_string())),
+            None => req.body(Body::empty()),
+        }
+        .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        let status = res.status().as_u16();
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    fn reverse_charge_voucher() -> Value {
+        json!({
+            "event_date": "2026-07-15",
+            "description": "AWS July",
+            "counterparty": "Amazon Web Services",
+            "lines": [
+                {"account": 6540, "debit": "1000", "vat_code": "RCEU"},
+                {"account": 2645, "debit": "250"},
+                {"account": 2614, "credit": "250"},
+                {"account": 1930, "credit": "1000"},
+            ],
+        })
+    }
+
+    #[tokio::test]
+    async fn the_api_needs_a_token() {
+        let app = app();
+        assert_eq!(call(&app, None, "GET", "/api/projects", None).await.0, 401);
+        assert_eq!(
+            call(
+                &app,
+                Some("wrong-token-wrong-token-wrong"),
+                "GET",
+                "/api/projects",
+                None
+            )
+            .await
+            .0,
+            401
+        );
+        assert_eq!(
+            call(&app, Some(ADMIN), "GET", "/api/projects", None)
+                .await
+                .0,
+            200
+        );
+    }
+
+    #[tokio::test]
+    async fn agents_propose_but_only_admins_approve() {
+        let app = app();
+        let (status, draft) = call(
+            &app,
+            Some(AGENT),
+            "POST",
+            "/api/drafts",
+            Some(reverse_charge_voucher()),
+        )
+        .await;
+        assert_eq!(status, 200, "{draft}");
+        let id = draft["draft"]["id"]
+            .as_i64()
+            .or(draft["id"].as_i64())
+            .expect("draft id");
+        let approve = format!("/api/drafts/{id}/approve");
+        assert_eq!(call(&app, Some(AGENT), "POST", &approve, None).await.0, 403);
+        let (status, posted) = call(&app, Some(ADMIN), "POST", &approve, None).await;
+        assert_eq!(status, 200, "{posted}");
+        let (_, verify) = call(&app, Some(ADMIN), "GET", "/api/ledger/verify", None).await;
+        assert_eq!(verify["ok"], true, "{verify}");
+        assert_eq!(verify["vouchers"], 1);
+    }
+
+    #[tokio::test]
+    async fn an_unbalanced_voucher_is_refused() {
+        let app = app();
+        let body = json!({
+            "event_date": "2026-07-16",
+            "description": "x",
+            "lines": [{"account": 6540, "debit": "10"}, {"account": 1930, "credit": "9"}],
+        });
+        let (status, err) = call(&app, Some(ADMIN), "POST", "/api/drafts", Some(body)).await;
+        assert_eq!(status, 400, "{err}");
+        assert_eq!(err["error"]["code"], "invalid_input");
+    }
+
+    #[tokio::test]
+    async fn reverse_charge_lands_in_boxes_21_30_and_48() {
+        let app = app();
+        let (_, draft) = call(
+            &app,
+            Some(ADMIN),
+            "POST",
+            "/api/drafts",
+            Some(reverse_charge_voucher()),
+        )
+        .await;
+        let id = draft["draft"]["id"]
+            .as_i64()
+            .or(draft["id"].as_i64())
+            .unwrap();
+        call(
+            &app,
+            Some(ADMIN),
+            "POST",
+            &format!("/api/drafts/{id}/approve"),
+            None,
+        )
+        .await;
+        let (status, report) = call(
+            &app,
+            Some(ADMIN),
+            "GET",
+            "/api/vat/report?quarter=2026-Q3",
+            None,
+        )
+        .await;
+        assert_eq!(status, 200, "{report}");
+        let amount = |b: &str| {
+            report["boxes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|x| x["box"] == b)
+                .unwrap()["amount"]
+                .clone()
+        };
+        assert_eq!(amount("21"), "1000.00");
+        assert_eq!(amount("30"), "250.00");
+        assert_eq!(amount("48"), "250.00");
+        assert_eq!(report["ready_to_file"], false, "boxes start unverified");
+    }
+
+    #[tokio::test]
+    async fn users_sign_in_with_a_password_and_agents_cannot_add_users() {
+        let app = app();
+        let user =
+            json!({"username": "astrid", "password": "a long enough password", "role": "admin"});
+        assert_eq!(
+            call(&app, Some(AGENT), "POST", "/api/users", Some(user.clone()))
+                .await
+                .0,
+            403
+        );
+        assert_eq!(
+            call(&app, Some(ADMIN), "POST", "/api/users", Some(user))
+                .await
+                .0,
+            200
+        );
+        let bad = json!({"username": "astrid", "password": "not the password", "ttl_hours": 1});
+        assert_eq!(
+            call(&app, None, "POST", "/api/login", Some(bad)).await.0,
+            401
+        );
+        let good =
+            json!({"username": "astrid", "password": "a long enough password", "ttl_hours": 1});
+        let (status, session) = call(&app, None, "POST", "/api/login", Some(good)).await;
+        assert_eq!(status, 200, "{session}");
+        let token = session["token"].as_str().unwrap();
+        let (status, me) = call(&app, Some(token), "GET", "/api/me", None).await;
+        assert_eq!(status, 200);
+        assert_eq!(me["username"], "astrid");
+    }
+
+    #[test]
+    fn starter_accounts_are_spelled_in_swedish_and_old_spellings_are_updated() {
+        let conn = open_db(":memory:").unwrap();
+        let name = |n: i64| -> String {
+            conn.query_row("SELECT name FROM account WHERE number = ?1", [n], |r| {
+                r.get(0)
+            })
+            .unwrap()
+        };
+        assert_eq!(name(7210), "Löner till tjänstemän");
+        // A book from before the change keeps the ASCII name until the next start; a renamed account stays as it is.
+        conn.execute(
+            "UPDATE account SET name = 'Loner till tjansteman' WHERE number = 7210",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE account SET name = 'Huvudkonto SEB' WHERE number = 1930",
+            [],
+        )
+        .unwrap();
+        ledger::seed(&conn).unwrap();
+        assert_eq!(name(7210), "Löner till tjänstemän");
+        assert_eq!(name(1930), "Huvudkonto SEB");
+    }
 }

@@ -22,3 +22,7 @@ sha2 = "0.10"
 tower-http = { version = "0.6", features = ["fs"] }
 argon2 = { version = "0.5", features = ["std"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
+
+[dev-dependencies]
+http-body-util = "0.1.5"
+tower = { version = "0.5.3", features = ["util"] }

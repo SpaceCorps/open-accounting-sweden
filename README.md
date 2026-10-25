@@ -42,26 +42,40 @@ The web panel signs in with the same username and password. Users with role `age
 - **Report prep.** Deadline-driven preparation of VAT (moms), employer declarations (AGI), the annual report and the tax return (INK2), each with its numbers and the supporting receipts.
 - **Secure.** Authenticated CLI sessions, encrypted secrets, audit trail, least-privilege tokens, encrypted backups.
 
-## Tests
+## Tests and checks
+
+There is no hosted CI. Run every check a PR must pass with:
 
 ```bash
-cargo test --workspace      # core logic: amounts, bank CSV, matching, payroll, SIE helpers
+scripts/check.sh            # fmt, clippy (warnings are errors), tests, web check and build, smoke test
+```
+
+Or one at a time:
+
+```bash
+cargo test --workspace      # core logic, API tests against an in-memory database, CLI error envelope
 scripts/smoke.sh            # end to end against a throwaway server: auth, ledger rules, VAT, receipts, payroll
 ```
+
+The smoke test needs `curl`, `sqlite3` and `python3` on the PATH (on Windows: `winget install SQLite.SQLite`).
+
+To look at the web panel with realistic data, `scripts/demo.sh` starts a throwaway server with a month of demo bookkeeping on port 18990. Sign in as `demo` / `demo-password-123`.
 
 ## Web app
 
 The web panel (`web/`) is a Vite+ and React app built on the SpaceCorps design system, [`@spacecorps/components`](https://github.com/SpaceCorps/storybook) (MIT): sidebar shell, dashboard, time, inbox, bank, ledger, VAT, payroll and settings. `oas-server` serves it when `OAS_WEB_DIR` points at the build.
 
+`web/package.json` takes the library from a checkout of the storybook repository next to this one (`../storybook` from the repository root), so clone it there first, at the commit the `Dockerfile` pins:
+
 ```bash
-git clone https://github.com/SpaceCorps/storybook ../storybook && (cd ../storybook && pnpm install && vp pack)
-cd web
-OAS_STORYBOOK_PATH=$PWD/../../storybook pnpm install
-vp build                                                   # or `vp dev` with oas-server running on :8080
+git clone https://github.com/SpaceCorps/storybook ../storybook
+git -C ../storybook checkout <STORYBOOK_REF from the Dockerfile>
+(cd ../storybook && pnpm install && vp pack)
+cd web && pnpm install && vp build                         # or `vp dev` with oas-server running on :8080
 cd .. && OAS_WEB_DIR=$PWD/web/dist cargo run -p oas-server
 ```
 
-The Docker image does the same: it clones the storybook repository at a pinned commit (`STORYBOOK_REF` in the `Dockerfile`), builds it, then builds the web app, so deploying needs no registry token.
+The Docker image does the same: it clones the storybook repository at `STORYBOOK_REF`, builds it, then installs the web app from its committed lockfile, so deploying needs no registry token. To pick up library changes, bump `STORYBOOK_REF`, check out that commit in `../storybook`, rebuild it and run `pnpm install` in `web/` to refresh the lockfile.
 
 ## Architecture
 

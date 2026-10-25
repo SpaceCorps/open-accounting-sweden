@@ -7,17 +7,20 @@ cd "$(dirname "$0")/.."
 PORT=${1:-18990}
 cargo build --workspace -q
 T=$(mktemp -d)
+# Run copies, so the running demo never locks target/ against the next build (Windows).
+EXE=$([ -f target/debug/oas-server.exe ] && echo .exe || true)
+cp target/debug/oas-server$EXE target/debug/oas$EXE "$T/"
 ADMIN="demo-admin-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 OAS_TOKEN=$ADMIN OAS_DB=$T/demo.db OAS_DATA_DIR=$T/data OAS_BIND=127.0.0.1:$PORT OAS_WEB_DIR=$PWD/web/dist \
-  ./target/debug/oas-server 2>$T/server.log &
+  "$T/oas-server$EXE" 2>$T/server.log &
 SERVER=$!
 trap 'kill $SERVER 2>/dev/null; wait $SERVER 2>/dev/null; rm -rf "$T"' EXIT
 U=http://127.0.0.1:$PORT
 for _ in $(seq 1 30); do curl -s -o /dev/null $U/health && break; sleep 1; done
 export OAS_CONFIG_DIR=$T/cfg
-o() { ./target/debug/oas "$@" </dev/null >/dev/null; }
+o() { "$T/oas$EXE" "$@" </dev/null >/dev/null; }
 o auth login $U --token "$ADMIN"
-echo demo-password-123 | ./target/debug/oas user add demo --role admin >/dev/null
+echo demo-password-123 | "$T/oas$EXE" user add demo --role admin >/dev/null
 
 o company set "Norrsken Konsult AB" --org-number 556026-9986 --address "Sveavägen 12\n111 57 Stockholm" --f-skatt
 o customer add "Acme Logistik AB" --org-number 556677-8899 --address "Hamngatan 4\n411 06 Göteborg" --email ekonomi@acme.example

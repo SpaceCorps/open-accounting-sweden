@@ -2081,21 +2081,58 @@ fn run(cli: Cli) -> Result<(), Failure> {
     }
 }
 
+/// The structured error printed on stderr. Only project errors carry the known projects, so an
+/// agent can ask which one was meant.
+fn error_envelope(f: &Failure) -> Value {
+    let mut error = json!({"code": f.code, "message": f.message});
+    if f.code.starts_with("project_") {
+        error["projects"] = json!(f.projects);
+    }
+    json!({ "error": error })
+}
+
 fn main() {
     let cli = Cli::parse();
     let json_out = cli.json;
     if let Err(f) = run(cli) {
-        let mut error = json!({"code": f.code, "message": f.message});
-        // Only project errors carry the known projects, so an agent can ask which one was meant.
-        if f.code.starts_with("project_") {
-            error["projects"] = json!(f.projects);
-        }
-        let envelope = json!({ "error": error });
+        let envelope = error_envelope(&f);
         if json_out {
             eprintln!("{}", serde_json::to_string(&envelope).unwrap_or_default());
         } else {
             eprint!("{}", serde_norway::to_string(&envelope).unwrap_or_default());
         }
         std::process::exit(f.exit_code());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_errors_keep_their_code_and_message() {
+        let f = failure_from(r#"{"error":{"code":"forbidden","message":"agents cannot approve"}}"#);
+        assert_eq!(f.code, "forbidden");
+        assert_eq!(f.message, "agents cannot approve");
+        assert_eq!(f.exit_code(), Failure::new("forbidden", "").exit_code());
+    }
+
+    #[test]
+    fn a_reply_from_another_server_points_at_the_url() {
+        let f = failure_from("<html>404 Not Found</html>");
+        assert_eq!(f.code, "internal");
+        assert!(f.message.contains("instance URL"), "{}", f.message);
+    }
+
+    #[test]
+    fn only_project_errors_list_projects() {
+        let auth = error_envelope(&Failure::new("auth_required", "not logged in"));
+        assert!(auth["error"].get("projects").is_none(), "{auth}");
+        let f = failure_from(
+            r#"{"error":{"code":"project_not_found","message":"no project named 'Dmo'","projects":["Demo"]}}"#,
+        );
+        let envelope = error_envelope(&f);
+        assert_eq!(envelope["error"]["projects"], json!(["Demo"]));
+        assert_eq!(f.exit_code(), 2);
     }
 }
