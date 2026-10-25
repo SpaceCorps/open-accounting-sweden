@@ -1,18 +1,63 @@
 import {
-  Badge, Button, DataTable, Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader,
-  DialogTitle, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, type DataTableColumn,
+  Badge,
+  Button,
+  DataTable,
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  type DataTableColumn,
 } from "@spacecorps/components/ui";
 import { KeyRound, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, type Me } from "../api";
 import { useData } from "../hooks";
-import { ConfirmDialog, EmptyNote, Field, PageHeader, Section, TextField, notifyError, notifyOk } from "../kit";
+import {
+  ConfirmDialog,
+  EmptyNote,
+  Field,
+  PageHeader,
+  Section,
+  TextField,
+  notifyError,
+  notifyOk,
+} from "../kit";
+import { dateTime } from "../format";
 
-interface User { username: string; role: string; created_at: string }
-interface Token { id: number; name: string; created_at: string; last_used_at: string | null }
+interface User {
+  username: string;
+  role: string;
+  created_at: string;
+}
+interface Token {
+  id: number;
+  name: string;
+  created_at: string;
+  last_used_at: string | null;
+}
 
 function CompanySection({ canEdit }: { canEdit: boolean }) {
-  const company = useData<{ company: { name: string; org_number: string; contact_name: string; contact_phone: string; contact_email: string; address: string; vat_number: string; payment_info: string; f_skatt: boolean } | null }>("/company");
+  const company = useData<{
+    company: {
+      name: string;
+      org_number: string;
+      contact_name: string;
+      contact_phone: string;
+      contact_email: string;
+      address: string;
+      vat_number: string;
+      payment_info: string;
+      f_skatt: boolean;
+    } | null;
+  }>("/company");
   const [name, setName] = useState("");
   const [org, setOrg] = useState("");
   const [cname, setCname] = useState("");
@@ -37,7 +82,20 @@ function CompanySection({ canEdit }: { canEdit: boolean }) {
   }, [company.data]);
   async function save() {
     try {
-      await api("/company", { method: "POST", body: { name, org_number: org, contact_name: cname, contact_phone: phone, contact_email: email, address: address.replace(/, */g, "\n"), vat_number: vatNo, payment_info: payment, f_skatt: fskatt } });
+      await api("/company", {
+        method: "POST",
+        body: {
+          name,
+          org_number: org,
+          contact_name: cname,
+          contact_phone: phone,
+          contact_email: email,
+          address: address.replace(/, */g, "\n"),
+          vat_number: vatNo,
+          payment_info: payment,
+          f_skatt: fskatt,
+        },
+      });
       notifyOk("Company saved");
       company.reload();
     } catch (e) {
@@ -45,20 +103,62 @@ function CompanySection({ canEdit }: { canEdit: boolean }) {
     }
   }
   return (
-    <Section title="Company" description="Used in the SIE export header, the AGI file and your invoices.">
-      <div className="oas-form" style={{ maxWidth: 420 }}>
+    <Section
+      title="Company"
+      description="Used in the SIE export header, the AGI file and your invoices."
+    >
+      <form
+        className="oas-form"
+        style={{ maxWidth: 420 }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
         <TextField label="Company name" value={name} onChange={setName} />
-        <TextField label="Organisation number" value={org} onChange={setOrg} placeholder="556026-9986" />
-        <TextField label="Technical contact name" value={cname} onChange={setCname} hint="Named in the AGI file sent to Skatteverket" />
+        <TextField
+          label="Organisation number"
+          value={org}
+          onChange={setOrg}
+          placeholder="556026-9986"
+        />
+        <TextField
+          label="Technical contact name"
+          value={cname}
+          onChange={setCname}
+          hint="Named in the AGI file sent to Skatteverket"
+        />
         <TextField label="Contact phone" value={phone} onChange={setPhone} />
         <TextField label="Contact email" value={email} onChange={setEmail} />
-        <TextField label="Address on invoices" value={address.replace(/\n/g, ", ")} onChange={setAddress} hint="Street, postcode and city, separated by commas" />
-        <TextField label="VAT number" value={vatNo} onChange={setVatNo} hint="Leave empty to use SE + organisation number + 01" />
-        <TextField label="Payment details" value={payment} onChange={setPayment} hint="For example: Bankgiro 123-4567" />
-        <label className="oas-actions" style={{ cursor: "pointer" }}><input type="checkbox" checked={fskatt} onChange={(e) => setFskatt(e.target.checked)} /> <span>Approved for F-tax (printed on invoices)</span></label>
-        <div><Button disabled={!canEdit || !name.trim()} onClick={() => void save()}>Save</Button></div>
+        <TextField
+          label="Address on invoices"
+          value={address.replace(/\n/g, ", ")}
+          onChange={setAddress}
+          hint="Street, postcode and city, separated by commas"
+        />
+        <TextField
+          label="VAT number"
+          value={vatNo}
+          onChange={setVatNo}
+          hint="Leave empty to use SE + organisation number + 01"
+        />
+        <TextField
+          label="Payment details"
+          value={payment}
+          onChange={setPayment}
+          hint="For example: Bankgiro 123-4567"
+        />
+        <label className="oas-actions" style={{ cursor: "pointer" }}>
+          <input type="checkbox" checked={fskatt} onChange={(e) => setFskatt(e.target.checked)} />{" "}
+          <span>Approved for F-tax (printed on invoices)</span>
+        </label>
+        <div>
+          <Button disabled={!canEdit || !name.trim()} type="submit">
+            Save
+          </Button>
+        </div>
         {!canEdit ? <p className="oas-muted">Only an admin can change company details.</p> : null}
-      </div>
+      </form>
     </Section>
   );
 }
@@ -72,19 +172,50 @@ function PasswordSection() {
     try {
       await api("/me/password", { method: "POST", body: { current, new: next } });
       notifyOk("Password changed", "Your other sessions were signed out.");
-      setCurrent(""); setNext(""); setAgain("");
+      setCurrent("");
+      setNext("");
+      setAgain("");
     } catch (e) {
       notifyError(e);
     }
   }
   return (
     <Section title="Password" description="At least 12 characters.">
-      <div className="oas-form" style={{ maxWidth: 420 }}>
-        <TextField label="Current password" type="password" value={current} onChange={setCurrent} autoComplete="current-password" />
-        <TextField label="New password" type="password" value={next} onChange={setNext} autoComplete="new-password" />
-        <TextField label="Repeat new password" type="password" value={again} onChange={setAgain} autoComplete="new-password" />
-        <div><Button disabled={!current || next.length < 12} onClick={() => void save()}>Change password</Button></div>
-      </div>
+      <form
+        className="oas-form"
+        style={{ maxWidth: 420 }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
+        <TextField
+          label="Current password"
+          type="password"
+          value={current}
+          onChange={setCurrent}
+          autoComplete="current-password"
+        />
+        <TextField
+          label="New password"
+          type="password"
+          value={next}
+          onChange={setNext}
+          autoComplete="new-password"
+        />
+        <TextField
+          label="Repeat new password"
+          type="password"
+          value={again}
+          onChange={setAgain}
+          autoComplete="new-password"
+        />
+        <div>
+          <Button disabled={!current || next.length < 12} type="submit">
+            Change password
+          </Button>
+        </div>
+      </form>
     </Section>
   );
 }
@@ -118,18 +249,48 @@ function TokensSection() {
   }
   const columns: DataTableColumn<Token>[] = [
     { name: "name", header: "Name" },
-    { name: "created_at", header: "Created" },
-    { name: "last_used_at", header: "Last used", accessor: (t) => t.last_used_at ?? "never" },
+    { name: "created_at", header: "Created", accessor: (t) => dateTime(t.created_at) },
+    {
+      name: "last_used_at",
+      header: "Last used",
+      accessor: (t) => (t.last_used_at ? dateTime(t.last_used_at) : "never"),
+    },
   ];
   return (
-    <Section title="Access tokens" description="Permanent tokens for the CLI and agents. They act with your role." actions={<Button size="sm" onClick={() => { setCreated(null); setOpen(true); }}><Plus /> New token</Button>}>
-      {tokens.error ? <EmptyNote>Sign in with a username and password to manage access tokens.</EmptyNote> : (tokens.data?.tokens ?? []).length === 0 ? <EmptyNote>No tokens yet.</EmptyNote> : (
+    <Section
+      title="Access tokens"
+      description="Permanent tokens for the CLI and agents. They act with your role."
+      actions={
+        <Button
+          size="sm"
+          onClick={() => {
+            setCreated(null);
+            setOpen(true);
+          }}
+        >
+          <Plus /> New token
+        </Button>
+      }
+    >
+      {tokens.error ? (
+        <EmptyNote>Sign in with a username and password to manage access tokens.</EmptyNote>
+      ) : (tokens.data?.tokens ?? []).length === 0 ? (
+        <EmptyNote>No tokens yet.</EmptyNote>
+      ) : (
         <DataTable
           columns={columns}
           rows={tokens.data?.tokens ?? []}
           getRowId={(t) => String(t.id)}
           paginated={false}
-          rowActions={[{ tag: "revoke", label: "Revoke", icon: <Trash2 aria-hidden="true" />, tooltip: "Revoke token", variant: "destructive" }]}
+          rowActions={[
+            {
+              tag: "revoke",
+              label: "Revoke",
+              icon: <Trash2 aria-hidden="true" />,
+              tooltip: "Revoke token",
+              variant: "destructive",
+            },
+          ]}
           onRowAction={({ row }) => setRevoking(row)}
         />
       )}
@@ -137,18 +298,48 @@ function TokensSection() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{created ? "Copy your token now" : "New access token"}</DialogTitle>
-            <DialogDescription>{created ? "It is shown only once and stored only as a hash." : "Name it after where it will be used, for example laptop."}</DialogDescription>
+            <DialogDescription>
+              {created
+                ? "It is shown only once and stored only as a hash."
+                : "Name it after where it will be used, for example laptop."}
+            </DialogDescription>
           </DialogHeader>
-<DialogBody>
-          {created ? <code className="oas-code">{created}</code> : <TextField label="Name" value={name} onChange={setName} />}
-</DialogBody>
-<DialogFooter>
-            {created ? <Button onClick={() => { void navigator.clipboard.writeText(created); notifyOk("Copied"); }}><KeyRound /> Copy</Button> : <Button disabled={!name.trim()} onClick={() => void create()}>Create</Button>}
-            <Button variant="outline" onClick={() => setOpen(false)}>{created ? "Done" : "Cancel"}</Button>
+          <DialogBody>
+            {created ? (
+              <code className="oas-code">{created}</code>
+            ) : (
+              <TextField label="Name" value={name} onChange={setName} />
+            )}
+          </DialogBody>
+          <DialogFooter>
+            {created ? (
+              <Button
+                onClick={() => {
+                  void navigator.clipboard.writeText(created);
+                  notifyOk("Copied");
+                }}
+              >
+                <KeyRound /> Copy
+              </Button>
+            ) : (
+              <Button disabled={!name.trim()} onClick={() => void create()}>
+                Create
+              </Button>
+            )}
+            <Button variant="outline" onClick={() => setOpen(false)}>
+              {created ? "Done" : "Cancel"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <ConfirmDialog open={revoking !== null} title="Revoke this token?" description={revoking ? `Anything using "${revoking.name}" stops working immediately.` : ""} confirmLabel="Revoke" onConfirm={() => revoking && void revoke(revoking)} onCancel={() => setRevoking(null)} />
+      <ConfirmDialog
+        open={revoking !== null}
+        title="Revoke this token?"
+        description={revoking ? `Anything using "${revoking.name}" stops working immediately.` : ""}
+        confirmLabel="Revoke"
+        onConfirm={() => revoking && void revoke(revoking)}
+        onCancel={() => setRevoking(null)}
+      />
     </Section>
   );
 }
@@ -163,7 +354,8 @@ function UsersSection() {
     try {
       await api("/users", { method: "POST", body: { username, password, role } });
       notifyOk("User added", username);
-      setUsername(""); setPassword("");
+      setUsername("");
+      setPassword("");
       setOpen(false);
       users.reload();
     } catch (e) {
@@ -172,28 +364,82 @@ function UsersSection() {
   }
   const columns: DataTableColumn<User>[] = [
     { name: "username", header: "Username" },
-    { name: "role", header: "Role", cell: (v) => <Badge variant={v === "admin" ? "primary" : "secondary"}>{v as string}</Badge> },
-    { name: "created_at", header: "Created" },
+    {
+      name: "role",
+      header: "Role",
+      cell: (v) => <Badge variant={v === "admin" ? "primary" : "secondary"}>{v as string}</Badge>,
+    },
+    { name: "created_at", header: "Created", accessor: (u) => dateTime(u.created_at) },
   ];
   return (
-    <Section title="Users" description="Admins can approve postings. Agents can propose and read." actions={<Button size="sm" onClick={() => setOpen(true)}><Plus /> Add user</Button>}>
-      <DataTable columns={columns} rows={users.data?.users ?? []} getRowId={(u) => u.username} paginated={false} />
+    <Section
+      title="Users"
+      description="Admins can approve postings. Agents can propose and read."
+      actions={
+        <Button size="sm" onClick={() => setOpen(true)}>
+          <Plus /> Add user
+        </Button>
+      }
+    >
+      <DataTable
+        columns={columns}
+        rows={users.data?.users ?? []}
+        getRowId={(u) => u.username}
+        paginated={false}
+      />
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Add user</DialogTitle><DialogDescription>Create an agent user for each agent so it can get its own permanent token.</DialogDescription></DialogHeader>
-<DialogBody>
-          <div className="oas-form">
-            <TextField label="Username" value={username} onChange={setUsername} autoComplete="off" />
-            <TextField label="Password" type="password" value={password} onChange={setPassword} autoComplete="new-password" hint="At least 12 characters" />
-            <Field label="Role">
-              <Select value={role} onValueChange={setRole}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="admin">admin</SelectItem><SelectItem value="agent">agent</SelectItem></SelectContent>
-              </Select>
-            </Field>
-          </div>
-</DialogBody>
-<DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button><Button disabled={username.length < 3 || password.length < 12} onClick={() => void save()}>Add user</Button></DialogFooter>
+          <DialogHeader>
+            <DialogTitle>Add user</DialogTitle>
+            <DialogDescription>
+              Create an agent user for each agent so it can get its own permanent token.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="oas-dialog-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void save();
+            }}
+          >
+            <DialogBody>
+              <div className="oas-form">
+                <TextField
+                  label="Username"
+                  value={username}
+                  onChange={setUsername}
+                  autoComplete="off"
+                />
+                <TextField
+                  label="Password"
+                  type="password"
+                  value={password}
+                  onChange={setPassword}
+                  autoComplete="new-password"
+                  hint="At least 12 characters"
+                />
+                <Field label="Role">
+                  <Select value={role} onValueChange={setRole}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="admin">admin</SelectItem>
+                      <SelectItem value="agent">agent</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              </div>
+            </DialogBody>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+                Cancel
+              </Button>
+              <Button disabled={username.length < 3 || password.length < 12} type="submit">
+                Add user
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </Section>
@@ -203,7 +449,10 @@ function UsersSection() {
 export function SettingsPage({ me }: { me: Me }) {
   return (
     <>
-      <PageHeader title="Settings" description="Company details, users, access tokens and your password." />
+      <PageHeader
+        title="Settings"
+        description="Company details, users, access tokens and your password."
+      />
       <CompanySection canEdit={me.can_approve} />
       {me.can_approve ? <UsersSection /> : null}
       <TokensSection />

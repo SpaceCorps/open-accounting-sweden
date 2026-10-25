@@ -1,18 +1,20 @@
 # Web app. @spacecorps/components is built from the public SpaceCorps/storybook repository at a
 # pinned commit, so no registry token is needed. Bump STORYBOOK_REF to pick up library changes.
 FROM node:24-slim AS web
-ARG STORYBOOK_REF=e92dcbfb2ace88112c1a94f0a96580f31451f209
+ARG STORYBOOK_REF=256329b47e5ea91b59031b6a53a62553c016f7d2
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
  && rm -rf /var/lib/apt/lists/* && corepack enable
 RUN git clone https://github.com/SpaceCorps/storybook.git /storybook \
  && git -C /storybook checkout --quiet "$STORYBOOK_REF"
 WORKDIR /storybook
 RUN pnpm install --frozen-lockfile && pnpm exec vp pack
+# web/package.json points at ../../storybook, which from /src/web is /storybook, as on a dev machine.
 WORKDIR /src/web
-COPY web/package.json web/pnpm-workspace.yaml web/.pnpmfile.cjs ./
-RUN OAS_STORYBOOK_PATH=/storybook pnpm install --no-frozen-lockfile
+COPY web/package.json web/pnpm-workspace.yaml web/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 COPY web/index.html web/tsconfig.json web/vite.config.ts ./
 COPY web/src ./src
+COPY web/public ./public
 RUN pnpm exec vp build
 
 FROM rust:1-bookworm AS build
@@ -26,6 +28,8 @@ RUN useradd --system --uid 10001 oas && mkdir /data && chown oas /data
 COPY --from=build /src/target/release/oas-server /usr/local/bin/oas-server
 COPY --from=web /src/web/dist /srv/web
 USER oas
+# Listen on all interfaces inside the container; the server's own default is loopback only.
+ENV OAS_HOST=0.0.0.0
 ENV OAS_DB=/data/oas.db
 ENV OAS_WEB_DIR=/srv/web
 VOLUME /data

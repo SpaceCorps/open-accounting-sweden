@@ -8,14 +8,14 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use rand_core::{OsRng, RngCore};
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
+use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::{Extension, Json};
 use chrono::{Duration as ChronoDuration, Utc};
 use oas_core::{norm, utc_string};
+use rand_core::{OsRng, RngCore};
 use rusqlite::{Connection, params};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -84,12 +84,22 @@ pub fn hash_password(password: &str) -> Result<String, ApiError> {
     Argon2::default()
         .hash_password(password.as_bytes(), &salt)
         .map(|h| h.to_string())
-        .map_err(|_| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "could not hash password"))
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "could not hash password",
+            )
+        })
 }
 
 fn verify_password(password: &str, hash: &str) -> bool {
     PasswordHash::new(hash)
-        .map(|h| Argon2::default().verify_password(password.as_bytes(), &h).is_ok())
+        .map(|h| {
+            Argon2::default()
+                .verify_password(password.as_bytes(), &h)
+                .is_ok()
+        })
         .unwrap_or(false)
 }
 
@@ -104,11 +114,21 @@ pub fn actor_for_session(conn: &Connection, token: &str) -> Option<Actor> {
         "SELECT u.id, u.username, u.role FROM session s JOIN app_user u ON u.id = s.user_id
          WHERE s.token_hash = ?1 AND s.expires_at > ?2",
         params![hash, utc_string(Utc::now())],
-        |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+        |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        },
     )
     .ok()
     .map(|(id, name, role)| Actor {
-        role: if role == "admin" { Role::Admin } else { Role::Agent },
+        role: if role == "admin" {
+            Role::Admin
+        } else {
+            Role::Agent
+        },
         name,
         user_id: Some(id),
         session: Some(hash),
@@ -131,7 +151,11 @@ pub fn actor_for_pat(conn: &Connection, token: &str) -> Option<Actor> {
         params![utc_string(Utc::now()), found.0],
     );
     Some(Actor {
-        role: if found.3 == "admin" { Role::Admin } else { Role::Agent },
+        role: if found.3 == "admin" {
+            Role::Admin
+        } else {
+            Role::Agent
+        },
         name: found.2,
         user_id: Some(found.1),
         session: None,
@@ -156,17 +180,24 @@ pub async fn create_token(
     Json(b): Json<NewToken>,
 ) -> ApiResult {
     let Some(user_id) = actor.user_id else {
-        return Err(ApiError::invalid("sign in as a user (username and password) to create access tokens"));
+        return Err(ApiError::invalid(
+            "sign in as a user (username and password) to create access tokens",
+        ));
     };
     let name = b.name.trim().to_string();
     if name.is_empty() || name.chars().count() > 60 || name.chars().any(|c| c.is_control()) {
         return Err(ApiError::invalid("token name must be 1-60 characters"));
     }
     let conn = st.conn.lock().unwrap();
-    let count: i64 =
-        conn.query_row("SELECT COUNT(*) FROM api_token WHERE user_id = ?1", params![user_id], |r| r.get(0))?;
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM api_token WHERE user_id = ?1",
+        params![user_id],
+        |r| r.get(0),
+    )?;
     if count >= 20 {
-        return Err(ApiError::invalid("limit of 20 access tokens reached; revoke one first"));
+        return Err(ApiError::invalid(
+            "limit of 20 access tokens reached; revoke one first",
+        ));
     }
     let token = format!("oas_{}", random_hex());
     conn.execute(
@@ -175,11 +206,16 @@ pub async fn create_token(
     )?;
     let id = conn.last_insert_rowid();
     crate::ledger::audit(&conn, &actor, "token.create", &id.to_string(), &name)?;
-    Ok(Json(json!({"token": token, "id": id, "name": name, "role": actor.role.name(),
-                   "note": "store this token now; it is not shown again"})))
+    Ok(Json(
+        json!({"token": token, "id": id, "name": name, "role": actor.role.name(),
+                   "note": "store this token now; it is not shown again"}),
+    ))
 }
 
-pub async fn list_tokens(State(st): State<Shared>, Extension(actor): Extension<Actor>) -> ApiResult {
+pub async fn list_tokens(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+) -> ApiResult {
     let Some(user_id) = actor.user_id else {
         return Err(ApiError::invalid("sign in as a user to list access tokens"));
     };
@@ -201,12 +237,21 @@ pub async fn revoke_token(
     axum::extract::Path(id): axum::extract::Path<i64>,
 ) -> ApiResult {
     let Some(user_id) = actor.user_id else {
-        return Err(ApiError::invalid("sign in as a user to revoke access tokens"));
+        return Err(ApiError::invalid(
+            "sign in as a user to revoke access tokens",
+        ));
     };
     let conn = st.conn.lock().unwrap();
-    let n = conn.execute("DELETE FROM api_token WHERE id = ?1 AND user_id = ?2", params![id, user_id])?;
+    let n = conn.execute(
+        "DELETE FROM api_token WHERE id = ?1 AND user_id = ?2",
+        params![id, user_id],
+    )?;
     if n == 0 {
-        return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such access token"));
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "no such access token",
+        ));
     }
     crate::ledger::audit(&conn, &actor, "token.revoke", &id.to_string(), "")?;
     Ok(Json(json!({"status": "ok"})))
@@ -215,11 +260,14 @@ pub async fn revoke_token(
 fn check_username(u: &str) -> Result<String, ApiError> {
     let u = u.trim();
     let ok = (3..=40).contains(&u.chars().count())
-        && u.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+        && u.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
     if ok {
         Ok(u.to_string())
     } else {
-        Err(ApiError::invalid("username must be 3-40 characters: letters, digits, dot, dash or underscore"))
+        Err(ApiError::invalid(
+            "username must be 3-40 characters: letters, digits, dot, dash or underscore",
+        ))
     }
 }
 
@@ -276,13 +324,18 @@ pub async fn login(State(st): State<Shared>, Json(b): Json<LoginIn>) -> ApiResul
     let now = Utc::now();
     let expires = now + ChronoDuration::hours(ttl);
     let conn = st.conn.lock().unwrap();
-    conn.execute("DELETE FROM session WHERE expires_at < ?1", params![utc_string(now)])?;
+    conn.execute(
+        "DELETE FROM session WHERE expires_at < ?1",
+        params![utc_string(now)],
+    )?;
     conn.execute(
         "INSERT INTO session(token_hash, user_id, created_at, expires_at) VALUES (?1, ?2, ?3, ?4)",
         params![token_hash(&token), id, utc_string(now), utc_string(expires)],
     )?;
-    Ok(Json(json!({"token": token, "username": b.username.trim(), "role": role,
-                   "expires_at": utc_string(expires)})))
+    Ok(Json(
+        json!({"token": token, "username": b.username.trim(), "role": role,
+                   "expires_at": utc_string(expires)}),
+    ))
 }
 
 pub async fn logout(State(st): State<Shared>, Extension(actor): Extension<Actor>) -> ApiResult {
@@ -306,7 +359,11 @@ pub async fn add_user(
     Json(b): Json<NewUser>,
 ) -> ApiResult {
     if actor.role != Role::Admin {
-        return Err(ApiError::new(StatusCode::FORBIDDEN, "forbidden", "only an admin can add users"));
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "only an admin can add users",
+        ));
     }
     let username = check_username(&b.username)?;
     check_password(&b.password, &username)?;
@@ -327,14 +384,20 @@ pub async fn add_user(
 
 pub async fn list_users(State(st): State<Shared>, Extension(actor): Extension<Actor>) -> ApiResult {
     if actor.role != Role::Admin {
-        return Err(ApiError::new(StatusCode::FORBIDDEN, "forbidden", "only an admin can list users"));
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "only an admin can list users",
+        ));
     }
     let conn = st.conn.lock().unwrap();
     let rows: Vec<Value> = conn
         .prepare("SELECT username, role, created_at FROM app_user ORDER BY username")?
         .query_map([], |r| {
-            Ok(json!({"username": r.get::<_, String>(0)?, "role": r.get::<_, String>(1)?,
-                      "created_at": r.get::<_, String>(2)?}))
+            Ok(
+                json!({"username": r.get::<_, String>(0)?, "role": r.get::<_, String>(1)?,
+                      "created_at": r.get::<_, String>(2)?}),
+            )
         })?
         .filter_map(Result::ok)
         .collect();
@@ -353,19 +416,32 @@ pub async fn change_password(
     Json(b): Json<ChangePassword>,
 ) -> ApiResult {
     let Some(user_id) = actor.user_id else {
-        return Err(ApiError::invalid("this is a token login with no password; sign in as a user"));
+        return Err(ApiError::invalid(
+            "this is a token login with no password; sign in as a user",
+        ));
     };
     check_password(&b.new, &actor.name)?;
     let current_hash: String = {
         let conn = st.conn.lock().unwrap();
-        conn.query_row("SELECT password_hash FROM app_user WHERE id = ?1", params![user_id], |r| r.get(0))?
+        conn.query_row(
+            "SELECT password_hash FROM app_user WHERE id = ?1",
+            params![user_id],
+            |r| r.get(0),
+        )?
     };
     if !verify_password(&b.current, &current_hash) {
-        return Err(ApiError::new(StatusCode::UNAUTHORIZED, "auth_required", "current password is wrong"));
+        return Err(ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            "auth_required",
+            "current password is wrong",
+        ));
     }
     let hash = hash_password(&b.new)?;
     let conn = st.conn.lock().unwrap();
-    conn.execute("UPDATE app_user SET password_hash = ?1 WHERE id = ?2", params![hash, user_id])?;
+    conn.execute(
+        "UPDATE app_user SET password_hash = ?1 WHERE id = ?2",
+        params![hash, user_id],
+    )?;
     // Sign out every other session of this user.
     conn.execute(
         "DELETE FROM session WHERE user_id = ?1 AND token_hash != ?2",

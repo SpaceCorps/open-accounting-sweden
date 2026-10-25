@@ -733,6 +733,7 @@ dependencies = [
  "axum",
  "chrono",
  "chrono-tz",
+ "http-body-util",
  "oas-core",
  "rand_core",
  "rusqlite",
@@ -741,6 +742,7 @@ dependencies = [
  "sha2",
  "subtle",
  "tokio",
+ "tower",
  "tower-http",
 ]
 

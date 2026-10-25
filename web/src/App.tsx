@@ -1,6 +1,28 @@
-import { AppShell, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Toaster } from "@spacecorps/components/ui";
+import {
+  AppShell,
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Toaster,
+} from "@spacecorps/components/ui";
 import { ThemeProvider, useTheme } from "@spacecorps/components/theme";
-import { BookOpen, Clock, Inbox, Landmark, FileText, LayoutDashboard, LogOut, Moon, Percent, Settings, Sun, Users } from "lucide-react";
+import {
+  BookOpen,
+  Clock,
+  Inbox,
+  Landmark,
+  FileText,
+  LayoutDashboard,
+  LogOut,
+  Moon,
+  Percent,
+  Settings,
+  Sun,
+  Users,
+} from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { ApiError, api, getToken, setToken, type Me } from "./api";
 import { useHashPath } from "./hooks";
@@ -35,6 +57,10 @@ function Login({ onDone }: { onDone: () => void }) {
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (!username || !password) {
+      setError("Enter your username and password.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -56,15 +82,35 @@ function Login({ onDone }: { onDone: () => void }) {
     <div className="oas-login">
       <Card className="oas-login-card">
         <CardHeader>
-          <CardTitle>open-accounting-sweden</CardTitle>
-          <CardDescription>Sign in with your username and password.</CardDescription>
+          <div className="oas-login-brand">
+            <span className="oas-brand-mark" aria-hidden="true" />
+            <CardTitle>Open Accounting</CardTitle>
+          </div>
+          <CardDescription>
+            Bookkeeping for Swedish companies. Sign in with your username and password.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <form className="oas-form" onSubmit={submit}>
-            <TextField label="Username" value={username} onChange={setUsername} autoComplete="username" />
-            <TextField label="Password" type="password" value={password} onChange={setPassword} autoComplete="current-password" />
+            <TextField
+              label="Username"
+              name="username"
+              value={username}
+              onChange={setUsername}
+              autoComplete="username"
+              verbatim
+            />
+            <TextField
+              label="Password"
+              type="password"
+              name="password"
+              value={password}
+              onChange={setPassword}
+              autoComplete="current-password"
+            />
             <ErrorNote message={error} />
-            <Button type="submit" disabled={busy || !username || !password}>
+            {/* Kept enabled so Tab reaches it; empty fields get a message instead. */}
+            <Button type="submit" disabled={busy}>
               {busy ? "Signing in..." : "Sign in"}
             </Button>
           </form>
@@ -75,10 +121,17 @@ function Login({ onDone }: { onDone: () => void }) {
 }
 
 function ThemeToggle() {
-  const { theme, setTheme } = useTheme();
-  const dark = theme === "dark";
+  // Follow the theme on screen, which may come from the system setting, not the stored choice.
+  const { resolvedTheme, setTheme } = useTheme();
+  const dark = resolvedTheme === "dark";
   return (
-    <Button variant="ghost" size="icon" aria-label="Toggle theme" onClick={() => setTheme(dark ? "light" : "dark")}>
+    <Button
+      variant="ghost"
+      size="icon"
+      aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}
+      title={dark ? "Switch to light theme" : "Switch to dark theme"}
+      onClick={() => setTheme(dark ? "light" : "dark")}
+    >
       {dark ? <Sun /> : <Moon />}
     </Button>
   );
@@ -87,10 +140,13 @@ function ThemeToggle() {
 function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   const path = useHashPath();
   const current = NAV.find((n) => n.path === path) ?? NAV[0];
+  useEffect(() => {
+    document.title = `${current.label} · Open Accounting`;
+  }, [current.label]);
   return (
     <AppShell
       brandIcon={<span className="oas-brand-mark" aria-hidden="true" />}
-      brandName="Accounting"
+      brandName="Open Accounting"
       nav={[
         {
           label: "Workspace",
@@ -110,7 +166,12 @@ function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
               {me.username} ({me.role})
             </div>
           )}
-          <Button variant="ghost" className={collapsed ? "w-full justify-center px-0" : "w-full justify-start"} onClick={onSignOut} aria-label="Sign out">
+          <Button
+            variant="ghost"
+            className={collapsed ? "w-full justify-center px-0" : "w-full justify-start"}
+            onClick={onSignOut}
+            aria-label="Sign out"
+          >
             <LogOut /> {collapsed ? null : "Sign out"}
           </Button>
         </>

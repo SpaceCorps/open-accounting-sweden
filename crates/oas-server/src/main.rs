@@ -73,7 +73,12 @@ struct ApiError {
 
 impl ApiError {
     fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
-        Self { status, code, message: message.into(), projects: vec![] }
+        Self {
+            status,
+            code,
+            message: message.into(),
+            projects: vec![],
+        }
     }
     fn invalid(message: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, "invalid_input", message)
@@ -87,7 +92,11 @@ impl ApiError {
 impl From<rusqlite::Error> for ApiError {
     fn from(e: rusqlite::Error) -> Self {
         eprintln!("database error: {e}");
-        Self::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "database error")
+        Self::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "database error",
+        )
     }
 }
 
@@ -147,6 +156,15 @@ fn open_db(path: &str) -> Result<Connection, rusqlite::Error> {
             conn.execute_batch(&format!("ALTER TABLE project ADD COLUMN {col} {decl}"))?;
         }
     }
+    // Who logged an entry, so the web form can preselect each user's last project. Older rows have none.
+    let has: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('time_entry') WHERE name = 'created_by'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has == 0 {
+        conn.execute_batch("ALTER TABLE time_entry ADD COLUMN created_by TEXT")?;
+    }
     conn.execute_batch(ledger::SCHEMA)?;
     conn.execute_batch(auth::SCHEMA)?;
     conn.execute_batch(inbox::SCHEMA)?;
@@ -185,9 +203,19 @@ async fn auth(State(st): State<Shared>, mut req: Request<Body>, next: Next) -> R
         None => false,
     };
     let actor = if is_admin {
-        Some(Actor { role: Role::Admin, name: "admin-token".into(), user_id: None, session: None })
+        Some(Actor {
+            role: Role::Admin,
+            name: "admin-token".into(),
+            user_id: None,
+            session: None,
+        })
     } else if is_agent {
-        Some(Actor { role: Role::Agent, name: "agent-token".into(), user_id: None, session: None })
+        Some(Actor {
+            role: Role::Agent,
+            name: "agent-token".into(),
+            user_id: None,
+            session: None,
+        })
     } else if given.starts_with("oas_") {
         let conn = st.conn.lock().unwrap();
         auth::actor_for_pat(&conn, &given)
@@ -201,15 +229,22 @@ async fn auth(State(st): State<Shared>, mut req: Request<Body>, next: Next) -> R
         req.extensions_mut().insert(actor);
         next.run(req).await
     } else {
-        ApiError::new(StatusCode::UNAUTHORIZED, "auth_required", "missing or invalid token")
-            .into_response()
+        ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            "auth_required",
+            "missing or invalid token",
+        )
+        .into_response()
     }
 }
 
 async fn security_headers(State(has_ui): State<bool>, req: Request<Body>, next: Next) -> Response {
     let mut res = next.run(req).await;
     let h = res.headers_mut();
-    h.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+    h.insert(
+        "x-content-type-options",
+        HeaderValue::from_static("nosniff"),
+    );
     h.insert("x-frame-options", HeaderValue::from_static("DENY"));
     h.insert("referrer-policy", HeaderValue::from_static("no-referrer"));
     // The built web app needs no inline scripts. The small fallback page does.
@@ -244,7 +279,12 @@ fn load_projects(conn: &Connection) -> Result<Vec<Project>, ApiError> {
 
 fn load_activities(conn: &Connection) -> Result<Vec<Activity>, ApiError> {
     let mut stmt = conn.prepare("SELECT name, message FROM activity ORDER BY name")?;
-    let rows = stmt.query_map([], |r| Ok(Activity { name: r.get(0)?, message: r.get(1)? }))?;
+    let rows = stmt.query_map([], |r| {
+        Ok(Activity {
+            name: r.get(0)?,
+            message: r.get(1)?,
+        })
+    })?;
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
@@ -253,14 +293,13 @@ fn names(projects: &[Project], idx: &[usize]) -> Vec<String> {
 }
 
 /// Resolve a typed project name to a project id, creating it only when asked to.
-fn resolve_project(
-    conn: &Connection,
-    given: Option<&str>,
-    create: bool,
-) -> Result<i64, ApiError> {
+fn resolve_project(conn: &Connection, given: Option<&str>, create: bool) -> Result<i64, ApiError> {
     let projects = load_projects(conn)?;
-    let active: Vec<String> =
-        projects.iter().filter(|p| !p.archived).map(|p| p.name.clone()).collect();
+    let active: Vec<String> = projects
+        .iter()
+        .filter(|p| !p.archived)
+        .map(|p| p.name.clone())
+        .collect();
     let Some(name) = given.map(str::trim).filter(|n| !n.is_empty()) else {
         return Err(ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -296,28 +335,43 @@ fn tz_of(name: Option<&str>) -> Result<Tz, ApiError> {
 }
 
 fn parse_utc(s: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(s).map(|d| d.with_timezone(&Utc)).unwrap_or_default()
+    DateTime::parse_from_rfc3339(s)
+        .map(|d| d.with_timezone(&Utc))
+        .unwrap_or_default()
 }
 
 fn clean(value: &str, field: &str, max: usize) -> Result<String, ApiError> {
     let v = value.trim();
     if v.chars().count() > max || v.chars().any(|c| c.is_control() && c != '\n') {
-        return Err(ApiError::invalid(format!("{field} is too long or has control characters")));
+        return Err(ApiError::invalid(format!(
+            "{field} is too long or has control characters"
+        )));
     }
     Ok(v.to_string())
 }
 
-fn resolve_message(conn: &Connection, activity: &str, message: Option<&str>) -> Result<String, ApiError> {
+fn resolve_message(
+    conn: &Connection,
+    activity: &str,
+    message: Option<&str>,
+) -> Result<String, ApiError> {
     match message.map(str::trim).filter(|m| !m.is_empty()) {
         Some(m) => clean(m, "message", 500),
         None => {
             let template: String = conn
-                .query_row("SELECT message FROM activity WHERE name = ?1", params![activity], |r| {
-                    r.get(0)
-                })
+                .query_row(
+                    "SELECT message FROM activity WHERE name = ?1",
+                    params![activity],
+                    |r| r.get(0),
+                )
                 .unwrap_or_default();
             // The {topic} placeholder is only filled when a message is given.
-            Ok(template.replace("{topic}", "").trim().trim_end_matches(':').trim().to_string())
+            Ok(template
+                .replace("{topic}", "")
+                .trim()
+                .trim_end_matches(':')
+                .trim()
+                .to_string())
         }
     }
 }
@@ -325,7 +379,11 @@ fn resolve_message(conn: &Connection, activity: &str, message: Option<&str>) -> 
 fn check_activity(conn: &Connection, name: &str) -> Result<String, ApiError> {
     let name = norm(name);
     let found: Option<String> = conn
-        .query_row("SELECT name FROM activity WHERE name = ?1", params![name], |r| r.get(0))
+        .query_row(
+            "SELECT name FROM activity WHERE name = ?1",
+            params![name],
+            |r| r.get(0),
+        )
         .ok();
     found.ok_or_else(|| {
         let known: Vec<String> = load_activities(conn)
@@ -346,7 +404,9 @@ fn check_overlap(
     start: DateTime<Utc>,
     end: Option<DateTime<Utc>>,
 ) -> Result<(), ApiError> {
-    let end_s = end.map(utc_string).unwrap_or_else(|| "9999-12-31T00:00:00Z".into());
+    let end_s = end
+        .map(utc_string)
+        .unwrap_or_else(|| "9999-12-31T00:00:00Z".into());
     let clash: i64 = conn.query_row(
         "SELECT COUNT(*) FROM time_entry
          WHERE start_utc < ?2 AND COALESCE(end_utc, '9999-12-31T00:00:00Z') > ?1",
@@ -476,12 +536,46 @@ async fn add_activity(State(st): State<Shared>, Json(b): Json<NewActivity>) -> A
          ON CONFLICT(name) DO UPDATE SET message = excluded.message",
         params![name, message],
     )?;
-    Ok(Json(json!({"activity": {"name": name, "message": message}})))
+    Ok(Json(
+        json!({"activity": {"name": name, "message": message}}),
+    ))
 }
 
-async fn list_projects(State(st): State<Shared>) -> ApiResult {
+async fn list_projects(State(st): State<Shared>, Extension(actor): Extension<Actor>) -> ApiResult {
     let conn = st.conn.lock().unwrap();
-    Ok(Json(json!({"projects": load_projects(&conn)?})))
+    Ok(Json(json!({
+        "projects": load_projects(&conn)?,
+        "default_project": default_project(&conn, &actor.name)?,
+    })))
+}
+
+/// The project a new entry should start on in the web form: the one this user logged last, else the
+/// last one anybody logged, else the newest active project. Archived projects are never suggested.
+/// The CLI does not use this; an entry without a project is still refused there.
+fn default_project(conn: &Connection, user: &str) -> Result<Option<String>, ApiError> {
+    use rusqlite::OptionalExtension;
+    const LAST_ENTRY: &str = "SELECT p.name FROM time_entry t JOIN project p ON p.id = t.project_id
+         WHERE p.archived = 0 AND (?1 IS NULL OR t.created_by = ?1)
+         ORDER BY t.created_at DESC, t.id DESC LIMIT 1";
+    let last = |by: Option<&str>| {
+        conn.query_row(LAST_ENTRY, params![by], |r| r.get(0))
+            .optional()
+    };
+    let newest = || {
+        conn.query_row(
+            "SELECT name FROM project WHERE archived = 0 ORDER BY id DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+    };
+    Ok(match last(Some(user))? {
+        Some(p) => Some(p),
+        None => match last(None)? {
+            Some(p) => Some(p),
+            None => newest()?,
+        },
+    })
 }
 
 #[derive(Deserialize)]
@@ -496,13 +590,29 @@ struct NewProject {
 }
 
 /// Validate a rate setting: "none" takes no rate, "hourly" and "fixed" need a positive one.
-fn parse_rate(rate_type: Option<&str>, rate: Option<&str>, currency: Option<&str>) -> Result<(String, Option<i64>, String), ApiError> {
-    let rt = rate_type.map(|t| t.trim().to_lowercase()).filter(|t| !t.is_empty()).unwrap_or_else(|| {
-        if rate.is_some_and(|r| !r.trim().is_empty()) { "hourly".into() } else { "none".into() }
-    });
-    let cur = currency.map(|c| c.trim().to_uppercase()).filter(|c| !c.is_empty()).unwrap_or_else(|| "SEK".into());
+fn parse_rate(
+    rate_type: Option<&str>,
+    rate: Option<&str>,
+    currency: Option<&str>,
+) -> Result<(String, Option<i64>, String), ApiError> {
+    let rt = rate_type
+        .map(|t| t.trim().to_lowercase())
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| {
+            if rate.is_some_and(|r| !r.trim().is_empty()) {
+                "hourly".into()
+            } else {
+                "none".into()
+            }
+        });
+    let cur = currency
+        .map(|c| c.trim().to_uppercase())
+        .filter(|c| !c.is_empty())
+        .unwrap_or_else(|| "SEK".into());
     if cur.len() != 3 || !cur.chars().all(|c| c.is_ascii_alphabetic()) {
-        return Err(ApiError::invalid("currency must be a three-letter code such as SEK"));
+        return Err(ApiError::invalid(
+            "currency must be a three-letter code such as SEK",
+        ));
     }
     match rt.as_str() {
         "none" => Ok(("none".into(), None, cur)),
@@ -517,7 +627,11 @@ fn parse_rate(rate_type: Option<&str>, rate: Option<&str>, currency: Option<&str
     }
 }
 
-async fn add_project(State(st): State<Shared>, Extension(actor): Extension<Actor>, Json(b): Json<NewProject>) -> ApiResult {
+async fn add_project(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    Json(b): Json<NewProject>,
+) -> ApiResult {
     let name = clean(&b.name, "name", 80)?;
     if name.is_empty() {
         return Err(ApiError::invalid("project name is empty"));
@@ -527,16 +641,33 @@ async fn add_project(State(st): State<Shared>, Extension(actor): Extension<Actor
         .iter()
         .map(|a| clean(a, "alias", 80))
         .collect::<Result<Vec<_>, _>>()?;
-    let client = b.client.as_deref().map(|c| clean(c, "client", 80)).transpose()?;
-    let has_rate = b.rate_type.as_deref().is_some_and(|t| t != "none") || b.rate.as_deref().is_some_and(|r| !r.trim().is_empty());
+    let client = b
+        .client
+        .as_deref()
+        .map(|c| clean(c, "client", 80))
+        .transpose()?;
+    let has_rate = b.rate_type.as_deref().is_some_and(|t| t != "none")
+        || b.rate.as_deref().is_some_and(|r| !r.trim().is_empty());
     if has_rate && actor.role != Role::Admin {
-        return Err(ApiError::new(StatusCode::FORBIDDEN, "forbidden", "only an admin can set a project rate"));
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "only an admin can set a project rate",
+        ));
     }
-    let (rate_type, rate, currency) = parse_rate(b.rate_type.as_deref(), b.rate.as_deref(), b.currency.as_deref())?;
+    let (rate_type, rate, currency) = parse_rate(
+        b.rate_type.as_deref(),
+        b.rate.as_deref(),
+        b.currency.as_deref(),
+    )?;
     let conn = st.conn.lock().unwrap();
     let existing = load_projects(&conn)?;
     if matches!(match_project(&existing, &name), Match::Exact(_)) {
-        return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "project already exists"));
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            "project already exists",
+        ));
     }
     conn.execute(
         "INSERT INTO project(name, aliases, client, rate_type, rate, currency) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -564,18 +695,39 @@ async fn set_project_rate(
     Json(b): Json<RateBody>,
 ) -> ApiResult {
     if actor.role != Role::Admin {
-        return Err(ApiError::new(StatusCode::FORBIDDEN, "forbidden", "only an admin can set a project rate"));
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "only an admin can set a project rate",
+        ));
     }
-    let (rate_type, rate, currency) = parse_rate(b.rate_type.as_deref(), b.rate.as_deref(), b.currency.as_deref())?;
+    let (rate_type, rate, currency) = parse_rate(
+        b.rate_type.as_deref(),
+        b.rate.as_deref(),
+        b.currency.as_deref(),
+    )?;
     let conn = st.conn.lock().unwrap();
     let n = conn.execute(
         "UPDATE project SET rate_type = ?1, rate = ?2, currency = ?3 WHERE id = ?4",
         params![rate_type, rate, currency, id],
     )?;
     if n == 0 {
-        return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such project"));
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "no such project",
+        ));
     }
-    ledger::audit(&conn, &actor, "project.rate", &id.to_string(), &format!("{rate_type} {}", rate.map(oas_core::format_amount).unwrap_or_default()))?;
+    ledger::audit(
+        &conn,
+        &actor,
+        "project.rate",
+        &id.to_string(),
+        &format!(
+            "{rate_type} {}",
+            rate.map(oas_core::format_amount).unwrap_or_default()
+        ),
+    )?;
     let project = load_projects(&conn)?.into_iter().find(|p| p.id == id);
     Ok(Json(json!({"project": project})))
 }
@@ -593,7 +745,11 @@ struct LogEntry {
     timezone: Option<String>,
 }
 
-async fn log_time(State(st): State<Shared>, Json(b): Json<LogEntry>) -> ApiResult {
+async fn log_time(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    Json(b): Json<LogEntry>,
+) -> ApiResult {
     let tz = tz_of(b.timezone.as_deref())?;
     let start = parse_local(&b.date, &b.from, tz).map_err(ApiError::invalid)?;
     let mut end = parse_local(&b.date, &b.to, tz).map_err(ApiError::invalid)?;
@@ -612,8 +768,8 @@ async fn log_time(State(st): State<Shared>, Json(b): Json<LogEntry>) -> ApiResul
     check_overlap(&conn, start, Some(end))?;
     let project_id = resolve_project(&conn, b.project.as_deref(), b.create_project)?;
     conn.execute(
-        "INSERT INTO time_entry(start_utc, end_utc, tz, activity, project_id, message, created_at, source)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'api')",
+        "INSERT INTO time_entry(start_utc, end_utc, tz, activity, project_id, message, created_at, source, created_by)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'api', ?8)",
         params![
             utc_string(start),
             utc_string(end),
@@ -621,7 +777,8 @@ async fn log_time(State(st): State<Shared>, Json(b): Json<LogEntry>) -> ApiResul
             activity,
             project_id,
             message,
-            utc_string(Utc::now())
+            utc_string(Utc::now()),
+            actor.name
         ],
     )?;
     let id = conn.last_insert_rowid();
@@ -639,13 +796,24 @@ struct StartTimer {
     timezone: Option<String>,
 }
 
-async fn start_timer(State(st): State<Shared>, Json(b): Json<StartTimer>) -> ApiResult {
+async fn start_timer(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    Json(b): Json<StartTimer>,
+) -> ApiResult {
     let tz = tz_of(b.timezone.as_deref())?;
     let conn = st.conn.lock().unwrap();
-    let running: i64 =
-        conn.query_row("SELECT COUNT(*) FROM time_entry WHERE end_utc IS NULL", [], |r| r.get(0))?;
+    let running: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM time_entry WHERE end_utc IS NULL",
+        [],
+        |r| r.get(0),
+    )?;
     if running > 0 {
-        return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "a timer is already running"));
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            "a timer is already running",
+        ));
     }
     let activity = check_activity(&conn, &b.activity)?;
     let message = resolve_message(&conn, &activity, b.message.as_deref())?;
@@ -653,9 +821,9 @@ async fn start_timer(State(st): State<Shared>, Json(b): Json<StartTimer>) -> Api
     check_overlap(&conn, now, None)?;
     let project_id = resolve_project(&conn, b.project.as_deref(), b.create_project)?;
     conn.execute(
-        "INSERT INTO time_entry(start_utc, end_utc, tz, activity, project_id, message, created_at, source)
-         VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, 'api')",
-        params![utc_string(now), tz.name(), activity, project_id, message, utc_string(now)],
+        "INSERT INTO time_entry(start_utc, end_utc, tz, activity, project_id, message, created_at, source, created_by)
+         VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, 'api', ?7)",
+        params![utc_string(now), tz.name(), activity, project_id, message, utc_string(now), actor.name],
     )?;
     let id = conn.last_insert_rowid();
     let entry = load_entries(&conn)?.into_iter().find(|e| e.id == id);
@@ -665,10 +833,16 @@ async fn start_timer(State(st): State<Shared>, Json(b): Json<StartTimer>) -> Api
 async fn stop_timer(State(st): State<Shared>) -> ApiResult {
     let conn = st.conn.lock().unwrap();
     let id: Option<i64> = conn
-        .query_row("SELECT id FROM time_entry WHERE end_utc IS NULL", [], |r| r.get(0))
+        .query_row("SELECT id FROM time_entry WHERE end_utc IS NULL", [], |r| {
+            r.get(0)
+        })
         .ok();
     let Some(id) = id else {
-        return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", "no timer is running"));
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "no timer is running",
+        ));
     };
     conn.execute(
         "UPDATE time_entry SET end_utc = ?1 WHERE id = ?2",
@@ -692,9 +866,16 @@ async fn edit_entry(
 ) -> ApiResult {
     let message = clean(&b.message, "message", 500)?;
     let conn = st.conn.lock().unwrap();
-    let n = conn.execute("UPDATE time_entry SET message = ?1 WHERE id = ?2", params![message, id])?;
+    let n = conn.execute(
+        "UPDATE time_entry SET message = ?1 WHERE id = ?2",
+        params![message, id],
+    )?;
     if n == 0 {
-        return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such time entry"));
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "no such time entry",
+        ));
     }
     ledger::audit(&conn, &actor, "time.message", &id.to_string(), &message)?;
     let entry = load_entries(&conn)?.into_iter().find(|e| e.id == id);
@@ -726,7 +907,9 @@ fn weekdays(from: chrono::NaiveDate, to: chrono::NaiveDate) -> i64 {
 async fn income(State(st): State<Shared>, Query(q): Query<IncomeQuery>) -> ApiResult {
     use chrono::Datelike;
     let conn = st.conn.lock().unwrap();
-    let today = Utc::now().with_timezone(&chrono_tz::Europe::Stockholm).date_naive();
+    let today = Utc::now()
+        .with_timezone(&chrono_tz::Europe::Stockholm)
+        .date_naive();
     let first = match q.month.as_deref().filter(|m| !m.trim().is_empty()) {
         Some(m) => chrono::NaiveDate::parse_from_str(&format!("{}-01", m.trim()), "%Y-%m-%d")
             .map_err(|_| ApiError::invalid("month must look like 2026-10"))?,
@@ -747,19 +930,36 @@ async fn income(State(st): State<Shared>, Query(q): Query<IncomeQuery>) -> ApiRe
     let mut hours = 0.0;
     let mut fixed: i64 = 0;
     for e in all.iter().filter(|e| e.date >= from_s && e.date <= to_s) {
-        let Some(p) = projects.iter().find(|p| p.name == e.project) else { continue };
+        let Some(p) = projects.iter().find(|p| p.name == e.project) else {
+            continue;
+        };
         if p.currency != "SEK" {
             continue;
         }
         hours += e.hours;
         if p.rate_type == "hourly" {
-            hourly += e.amount.as_deref().and_then(|a| oas_core::parse_amount(a).ok()).unwrap_or(0);
+            hourly += e
+                .amount
+                .as_deref()
+                .and_then(|a| oas_core::parse_amount(a).ok())
+                .unwrap_or(0);
         }
     }
-    for p in projects.iter().filter(|p| p.rate_type == "fixed" && p.currency == "SEK") {
-        let earliest = all.iter().filter(|e| e.project == p.name).map(|e| e.date.as_str()).min();
+    for p in projects
+        .iter()
+        .filter(|p| p.rate_type == "fixed" && p.currency == "SEK")
+    {
+        let earliest = all
+            .iter()
+            .filter(|e| e.project == p.name)
+            .map(|e| e.date.as_str())
+            .min();
         if earliest.is_some_and(|d| d >= from_s.as_str() && d <= to_s.as_str()) {
-            fixed += p.rate.as_deref().and_then(|a| oas_core::parse_amount(a).ok()).unwrap_or(0);
+            fixed += p
+                .rate
+                .as_deref()
+                .and_then(|a| oas_core::parse_amount(a).ok())
+                .unwrap_or(0);
         }
     }
     // Invoices that are not built from tracked time, by invoice date, excluding VAT.
@@ -783,8 +983,16 @@ async fn income(State(st): State<Shared>, Query(q): Query<IncomeQuery>) -> ApiRe
         )
         .unwrap_or(0);
 
-    let elapsed_end = if today < first { first - chrono::Duration::days(1) } else { today.min(last) };
-    let elapsed = if elapsed_end < first { 0 } else { weekdays(first, elapsed_end) };
+    let elapsed_end = if today < first {
+        first - chrono::Duration::days(1)
+    } else {
+        today.min(last)
+    };
+    let elapsed = if elapsed_end < first {
+        0
+    } else {
+        weekdays(first, elapsed_end)
+    };
     let total_days = weekdays(first, last);
     let projected_hourly = if elapsed > 0 && elapsed < total_days {
         ((hourly as f64) / elapsed as f64 * total_days as f64).round() as i64
@@ -831,14 +1039,27 @@ async fn report(State(st): State<Shared>, Query(f): Query<Filters>) -> ApiResult
     {
         let projects = load_projects(&conn)?;
         for e in &entries {
-            let Some(p) = projects.iter().find(|p| p.name == e.project) else { continue };
+            let Some(p) = projects.iter().find(|p| p.name == e.project) else {
+                continue;
+            };
             match p.rate_type.as_str() {
                 "hourly" => {
-                    let a = e.amount.as_deref().and_then(|a| oas_core::parse_amount(a).ok()).unwrap_or(0);
-                    amount_by_project.entry(p.name.clone()).or_insert((0, p.currency.clone())).0 += a;
+                    let a = e
+                        .amount
+                        .as_deref()
+                        .and_then(|a| oas_core::parse_amount(a).ok())
+                        .unwrap_or(0);
+                    amount_by_project
+                        .entry(p.name.clone())
+                        .or_insert((0, p.currency.clone()))
+                        .0 += a;
                 }
                 "fixed" => {
-                    let fee = p.rate.as_deref().and_then(|a| oas_core::parse_amount(a).ok()).unwrap_or(0);
+                    let fee = p
+                        .rate
+                        .as_deref()
+                        .and_then(|a| oas_core::parse_amount(a).ok())
+                        .unwrap_or(0);
                     amount_by_project.insert(p.name.clone(), (fee, p.currency.clone()));
                 }
                 _ => {}
@@ -870,10 +1091,15 @@ async fn report(State(st): State<Shared>, Query(f): Query<Filters>) -> ApiResult
     })))
 }
 
-async fn export_csv(State(st): State<Shared>, Query(f): Query<Filters>) -> Result<Response, ApiError> {
+async fn export_csv(
+    State(st): State<Shared>,
+    Query(f): Query<Filters>,
+) -> Result<Response, ApiError> {
     let conn = st.conn.lock().unwrap();
     let entries = filtered(&conn, &f)?;
-    let mut out = String::from("date,start,end,hours,timezone,project,client,activity,message,rate,amount,currency\n");
+    let mut out = String::from(
+        "date,start,end,hours,timezone,project,client,activity,message,rate,amount,currency\n",
+    );
     for e in entries {
         out.push_str(&csv_row(&[
             e.date,
@@ -894,50 +1120,18 @@ async fn export_csv(State(st): State<Shared>, Query(f): Query<Filters>) -> Resul
     Ok((
         [
             (header::CONTENT_TYPE, "text/csv; charset=utf-8"),
-            (header::CONTENT_DISPOSITION, "attachment; filename=\"time-entries.csv\""),
+            (
+                header::CONTENT_DISPOSITION,
+                "attachment; filename=\"time-entries.csv\"",
+            ),
         ],
         out,
     )
         .into_response())
 }
 
-#[tokio::main]
-async fn main() {
-    let token = std::env::var("OAS_TOKEN").unwrap_or_default();
-    if token.len() < 24 {
-        eprintln!("OAS_TOKEN must be set to a secret of at least 24 characters");
-        std::process::exit(2);
-    }
-    let db_path = std::env::var("OAS_DB").unwrap_or_else(|_| "oas.db".into());
-    let conn = open_db(&db_path).unwrap_or_else(|e| {
-        eprintln!("cannot open database {db_path}: {e}");
-        std::process::exit(1);
-    });
-    let bind = std::env::var("OAS_BIND").unwrap_or_else(|_| {
-        format!("0.0.0.0:{}", std::env::var("PORT").unwrap_or_else(|_| "8080".into()))
-    });
-    let agent_token = std::env::var("OAS_AGENT_TOKEN").ok().filter(|t| !t.is_empty());
-    if let Some(t) = &agent_token {
-        if t.len() < 24 || *t == token {
-            eprintln!("OAS_AGENT_TOKEN must be at least 24 characters and differ from OAS_TOKEN");
-            std::process::exit(2);
-        }
-    }
-    // Receipts live next to the database unless OAS_DATA_DIR says otherwise.
-    let data_dir = std::env::var("OAS_DATA_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| {
-        std::path::Path::new(&db_path).parent().map(|p| p.to_path_buf()).unwrap_or_default()
-    });
-    let docs_dir = data_dir.join("documents");
-    let dummy_hash = auth::hash_password("dummy password used only for timing").unwrap_or_default();
-    let state: Shared = Arc::new(AppState {
-        conn: Mutex::new(conn),
-        token,
-        agent_token,
-        limiter: auth::Limiter::default(),
-        dummy_hash,
-        docs_dir,
-    });
-
+/// The whole HTTP app: the API under /api, health, login, and the web app or fallback page.
+fn router(state: Shared, web_dir: Option<&str>) -> Router {
     let api = Router::new()
         .route("/activities", get(list_activities).post(add_activity))
         .route("/projects", get(list_projects).post(add_project))
@@ -955,8 +1149,14 @@ async fn main() {
         .route("/users", get(auth::list_users).post(auth::add_user))
         .route("/tokens", get(auth::list_tokens).post(auth::create_token))
         .route("/tokens/{id}/revoke", post(auth::revoke_token))
-        .route("/company", get(ledger::get_company).post(ledger::set_company))
-        .route("/accounts", get(ledger::list_accounts).post(ledger::add_account))
+        .route(
+            "/company",
+            get(ledger::get_company).post(ledger::set_company),
+        )
+        .route(
+            "/accounts",
+            get(ledger::list_accounts).post(ledger::add_account),
+        )
         .route("/drafts", get(ledger::list_drafts).post(ledger::propose))
         .route("/drafts/{id}/approve", post(ledger::approve))
         .route("/drafts/{id}/reject", post(ledger::reject))
@@ -967,7 +1167,10 @@ async fn main() {
         .route("/ledger/verify", get(ledger::verify))
         .route("/audit", get(ledger::audit_list))
         .route("/export/sie", get(ledger::export_sie))
-        .route("/documents", get(inbox::list_documents).post(inbox::upload_document))
+        .route(
+            "/documents",
+            get(inbox::list_documents).post(inbox::upload_document),
+        )
         .route("/documents/{id}/file", get(inbox::download_document))
         .route("/documents/{id}/meta", post(inbox::set_meta))
         .route("/bank/import", post(inbox::import_bank))
@@ -980,19 +1183,34 @@ async fn main() {
         .route("/vat/boxes/{box}/verify", post(vat::verify_box))
         .route("/vat/boxes/{box}/unused", post(vat::set_not_used))
         .route("/vat/accounts", post(vat::map_account))
-        .route("/employees", get(payroll::list_employees).post(payroll::add_employee))
-        .route("/employees/{id}/deactivate", post(payroll::deactivate_employee))
+        .route(
+            "/employees",
+            get(payroll::list_employees).post(payroll::add_employee),
+        )
+        .route(
+            "/employees/{id}/deactivate",
+            post(payroll::deactivate_employee),
+        )
         .route("/payroll/rates", get(payroll::list_rates))
         .route("/payroll/rates/{key}", post(payroll::set_rate))
         .route("/payroll/rates/{key}/verify", post(payroll::verify_rate))
         .route("/payroll/rates/{key}/unused", post(payroll::set_not_used))
-        .route("/payroll/runs", get(payroll::list_runs).post(payroll::create_run))
+        .route(
+            "/payroll/runs",
+            get(payroll::list_runs).post(payroll::create_run),
+        )
         .route("/payroll/runs/{id}", get(payroll::get_run))
         .route("/payroll/runs/{id}/delete", post(payroll::delete_run))
         .route("/payroll/runs/{id}/approve", post(payroll::approve_run))
         .route("/payroll/runs/{id}/agi.xml", get(payroll::agi_xml))
-        .route("/customers", get(invoices::list_customers).post(invoices::add_customer))
-        .route("/invoices", get(invoices::list_invoices).post(invoices::create_invoice))
+        .route(
+            "/customers",
+            get(invoices::list_customers).post(invoices::add_customer),
+        )
+        .route(
+            "/invoices",
+            get(invoices::list_invoices).post(invoices::create_invoice),
+        )
         .route("/invoices/from-time", post(invoices::from_time))
         .route("/invoices/{id}", get(invoices::get_invoice))
         .route("/invoices/{id}/issue", post(invoices::issue_invoice))
@@ -1004,10 +1222,6 @@ async fn main() {
         .layer(DefaultBodyLimit::max(26 * 1024 * 1024))
         .layer(middleware::from_fn_with_state(state.clone(), auth));
 
-    // OAS_WEB_DIR points at the built web app (web/dist). Without it a small fallback page is served.
-    let web_dir = std::env::var("OAS_WEB_DIR")
-        .ok()
-        .filter(|d| std::path::Path::new(d).join("index.html").is_file());
     let has_ui = web_dir.is_some();
     let mut app = Router::new()
         .route("/health", get(health))
@@ -1017,19 +1231,78 @@ async fn main() {
         Some(dir) => {
             let index = std::path::Path::new(dir).join("index.html");
             app.fallback_service(
-                tower_http::services::ServeDir::new(dir).fallback(tower_http::services::ServeFile::new(index)),
+                tower_http::services::ServeDir::new(dir)
+                    .fallback(tower_http::services::ServeFile::new(index)),
             )
         }
         None => app.route("/", get(web)),
     };
-    let app = app
-        .layer(middleware::from_fn_with_state(has_ui, security_headers))
-        .with_state(state);
+    app.layer(middleware::from_fn_with_state(has_ui, security_headers))
+        .with_state(state)
+}
 
-    let listener = tokio::net::TcpListener::bind(&bind).await.unwrap_or_else(|e| {
-        eprintln!("cannot bind {bind}: {e}");
+#[tokio::main]
+async fn main() {
+    let token = std::env::var("OAS_TOKEN").unwrap_or_default();
+    if token.len() < 24 {
+        eprintln!("OAS_TOKEN must be set to a secret of at least 24 characters");
+        std::process::exit(2);
+    }
+    let db_path = std::env::var("OAS_DB").unwrap_or_else(|_| "oas.db".into());
+    let conn = open_db(&db_path).unwrap_or_else(|e| {
+        eprintln!("cannot open database {db_path}: {e}");
         std::process::exit(1);
     });
+    // Loopback by default, so a local run is not reachable from the network (and Windows does not
+    // ask for a firewall rule). The container sets OAS_HOST=0.0.0.0; PORT comes from the host platform.
+    let bind = std::env::var("OAS_BIND").unwrap_or_else(|_| {
+        format!(
+            "{}:{}",
+            std::env::var("OAS_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
+            std::env::var("PORT").unwrap_or_else(|_| "8080".into())
+        )
+    });
+    let agent_token = std::env::var("OAS_AGENT_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty());
+    if let Some(t) = &agent_token
+        && (t.len() < 24 || *t == token)
+    {
+        eprintln!("OAS_AGENT_TOKEN must be at least 24 characters and differ from OAS_TOKEN");
+        std::process::exit(2);
+    }
+    // Receipts live next to the database unless OAS_DATA_DIR says otherwise.
+    let data_dir = std::env::var("OAS_DATA_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::path::Path::new(&db_path)
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_default()
+        });
+    let docs_dir = data_dir.join("documents");
+    let dummy_hash = auth::hash_password("dummy password used only for timing").unwrap_or_default();
+    let state: Shared = Arc::new(AppState {
+        conn: Mutex::new(conn),
+        token,
+        agent_token,
+        limiter: auth::Limiter::default(),
+        dummy_hash,
+        docs_dir,
+    });
+
+    // OAS_WEB_DIR points at the built web app (web/dist). Without it a small fallback page is served.
+    let web_dir = std::env::var("OAS_WEB_DIR")
+        .ok()
+        .filter(|d| std::path::Path::new(d).join("index.html").is_file());
+    let app = router(state, web_dir.as_deref());
+
+    let listener = tokio::net::TcpListener::bind(&bind)
+        .await
+        .unwrap_or_else(|e| {
+            eprintln!("cannot bind {bind}: {e}");
+            std::process::exit(1);
+        });
     eprintln!(
         "oas-server listening on {bind}, database {db_path}, web app {}",
         web_dir.as_deref().unwrap_or("fallback page")
@@ -1040,4 +1313,284 @@ async fn main() {
         })
         .await
         .unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    //! API tests against an in-memory database, through the same router the server runs.
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    const ADMIN: &str = "test-admin-token-0123456789abcdef";
+    const AGENT: &str = "test-agent-token-0123456789abcdef";
+
+    fn app() -> Router {
+        let state: Shared = Arc::new(AppState {
+            conn: Mutex::new(open_db(":memory:").unwrap()),
+            token: ADMIN.into(),
+            agent_token: Some(AGENT.into()),
+            limiter: auth::Limiter::default(),
+            dummy_hash: auth::hash_password("dummy").unwrap(),
+            docs_dir: std::env::temp_dir().join("oas-server-tests"),
+        });
+        router(state, None)
+    }
+
+    async fn call(
+        app: &Router,
+        token: Option<&str>,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+    ) -> (u16, Value) {
+        let mut req = Request::builder().method(method).uri(path);
+        if let Some(t) = token {
+            req = req.header(header::AUTHORIZATION, format!("Bearer {t}"));
+        }
+        let req = match body {
+            Some(b) => req
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(b.to_string())),
+            None => req.body(Body::empty()),
+        }
+        .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        let status = res.status().as_u16();
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    fn reverse_charge_voucher() -> Value {
+        json!({
+            "event_date": "2026-07-15",
+            "description": "AWS July",
+            "counterparty": "Amazon Web Services",
+            "lines": [
+                {"account": 6540, "debit": "1000", "vat_code": "RCEU"},
+                {"account": 2645, "debit": "250"},
+                {"account": 2614, "credit": "250"},
+                {"account": 1930, "credit": "1000"},
+            ],
+        })
+    }
+
+    #[tokio::test]
+    async fn the_api_needs_a_token() {
+        let app = app();
+        assert_eq!(call(&app, None, "GET", "/api/projects", None).await.0, 401);
+        assert_eq!(
+            call(
+                &app,
+                Some("wrong-token-wrong-token-wrong"),
+                "GET",
+                "/api/projects",
+                None
+            )
+            .await
+            .0,
+            401
+        );
+        assert_eq!(
+            call(&app, Some(ADMIN), "GET", "/api/projects", None)
+                .await
+                .0,
+            200
+        );
+    }
+
+    #[tokio::test]
+    async fn agents_propose_but_only_admins_approve() {
+        let app = app();
+        let (status, draft) = call(
+            &app,
+            Some(AGENT),
+            "POST",
+            "/api/drafts",
+            Some(reverse_charge_voucher()),
+        )
+        .await;
+        assert_eq!(status, 200, "{draft}");
+        let id = draft["draft"]["id"]
+            .as_i64()
+            .or(draft["id"].as_i64())
+            .expect("draft id");
+        let approve = format!("/api/drafts/{id}/approve");
+        assert_eq!(call(&app, Some(AGENT), "POST", &approve, None).await.0, 403);
+        let (status, posted) = call(&app, Some(ADMIN), "POST", &approve, None).await;
+        assert_eq!(status, 200, "{posted}");
+        let (_, verify) = call(&app, Some(ADMIN), "GET", "/api/ledger/verify", None).await;
+        assert_eq!(verify["ok"], true, "{verify}");
+        assert_eq!(verify["vouchers"], 1);
+    }
+
+    #[tokio::test]
+    async fn an_unbalanced_voucher_is_refused() {
+        let app = app();
+        let body = json!({
+            "event_date": "2026-07-16",
+            "description": "x",
+            "lines": [{"account": 6540, "debit": "10"}, {"account": 1930, "credit": "9"}],
+        });
+        let (status, err) = call(&app, Some(ADMIN), "POST", "/api/drafts", Some(body)).await;
+        assert_eq!(status, 400, "{err}");
+        assert_eq!(err["error"]["code"], "invalid_input");
+    }
+
+    #[tokio::test]
+    async fn reverse_charge_lands_in_boxes_21_30_and_48() {
+        let app = app();
+        let (_, draft) = call(
+            &app,
+            Some(ADMIN),
+            "POST",
+            "/api/drafts",
+            Some(reverse_charge_voucher()),
+        )
+        .await;
+        let id = draft["draft"]["id"]
+            .as_i64()
+            .or(draft["id"].as_i64())
+            .unwrap();
+        call(
+            &app,
+            Some(ADMIN),
+            "POST",
+            &format!("/api/drafts/{id}/approve"),
+            None,
+        )
+        .await;
+        let (status, report) = call(
+            &app,
+            Some(ADMIN),
+            "GET",
+            "/api/vat/report?quarter=2026-Q3",
+            None,
+        )
+        .await;
+        assert_eq!(status, 200, "{report}");
+        let amount = |b: &str| {
+            report["boxes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|x| x["box"] == b)
+                .unwrap()["amount"]
+                .clone()
+        };
+        assert_eq!(amount("21"), "1000.00");
+        assert_eq!(amount("30"), "250.00");
+        assert_eq!(amount("48"), "250.00");
+        assert_eq!(report["ready_to_file"], false, "boxes start unverified");
+    }
+
+    #[tokio::test]
+    async fn users_sign_in_with_a_password_and_agents_cannot_add_users() {
+        let app = app();
+        let user =
+            json!({"username": "astrid", "password": "a long enough password", "role": "admin"});
+        assert_eq!(
+            call(&app, Some(AGENT), "POST", "/api/users", Some(user.clone()))
+                .await
+                .0,
+            403
+        );
+        assert_eq!(
+            call(&app, Some(ADMIN), "POST", "/api/users", Some(user))
+                .await
+                .0,
+            200
+        );
+        let bad = json!({"username": "astrid", "password": "not the password", "ttl_hours": 1});
+        assert_eq!(
+            call(&app, None, "POST", "/api/login", Some(bad)).await.0,
+            401
+        );
+        let good =
+            json!({"username": "astrid", "password": "a long enough password", "ttl_hours": 1});
+        let (status, session) = call(&app, None, "POST", "/api/login", Some(good)).await;
+        assert_eq!(status, 200, "{session}");
+        let token = session["token"].as_str().unwrap();
+        let (status, me) = call(&app, Some(token), "GET", "/api/me", None).await;
+        assert_eq!(status, 200);
+        assert_eq!(me["username"], "astrid");
+    }
+
+    #[tokio::test]
+    async fn the_form_defaults_to_each_users_last_project() {
+        let app = app();
+        let default = |token: &'static str| {
+            let app = app.clone();
+            async move {
+                call(&app, Some(token), "GET", "/api/projects", None)
+                    .await
+                    .1["default_project"]
+                    .clone()
+            }
+        };
+        assert_eq!(default(ADMIN).await, Value::Null, "no projects yet");
+        for name in ["Acme", "Beta", "Gamma"] {
+            call(
+                &app,
+                Some(ADMIN),
+                "POST",
+                "/api/projects",
+                Some(json!({"name": name})),
+            )
+            .await;
+        }
+        assert_eq!(
+            default(ADMIN).await,
+            "Gamma",
+            "no entries: the newest project"
+        );
+        let log = |token: &'static str, project: &'static str, from: &'static str| {
+            let app = app.clone();
+            async move {
+                let body = json!({"activity": "meeting", "project": project, "date": "2026-10-21",
+                    "from": from, "to": format!("{}:30", &from[..2])});
+                assert_eq!(
+                    call(&app, Some(token), "POST", "/api/time", Some(body))
+                        .await
+                        .0,
+                    200
+                );
+            }
+        };
+        log(ADMIN, "Acme", "09:00").await;
+        log(AGENT, "Beta", "11:00").await;
+        assert_eq!(default(ADMIN).await, "Acme", "the admin's own last entry");
+        assert_eq!(default(AGENT).await, "Beta", "the agent's own last entry");
+    }
+
+    #[test]
+    fn starter_accounts_are_spelled_in_swedish_and_old_spellings_are_updated() {
+        let conn = open_db(":memory:").unwrap();
+        let name = |n: i64| -> String {
+            conn.query_row("SELECT name FROM account WHERE number = ?1", [n], |r| {
+                r.get(0)
+            })
+            .unwrap()
+        };
+        assert_eq!(name(7210), "Löner till tjänstemän");
+        // A book from before the change keeps the ASCII name until the next start; a renamed account stays as it is.
+        conn.execute(
+            "UPDATE account SET name = 'Loner till tjansteman' WHERE number = 7210",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE account SET name = 'Huvudkonto SEB' WHERE number = 1930",
+            [],
+        )
+        .unwrap();
+        ledger::seed(&conn).unwrap();
+        assert_eq!(name(7210), "Löner till tjänstemän");
+        assert_eq!(name(1930), "Huvudkonto SEB");
+    }
 }

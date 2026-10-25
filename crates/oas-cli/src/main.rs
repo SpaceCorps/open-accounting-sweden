@@ -247,7 +247,9 @@ enum EmployeeCmd {
         identity: String,
     },
     List,
-    Deactivate { id: i64 },
+    Deactivate {
+        id: i64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -263,9 +265,15 @@ enum PayrollCmd {
         lines: Vec<String>,
     },
     List,
-    Show { id: i64 },
-    Approve { id: i64 },
-    Delete { id: i64 },
+    Show {
+        id: i64,
+    },
+    Approve {
+        id: i64,
+    },
+    Delete {
+        id: i64,
+    },
     /// Write the AGI XML for an approved run
     Agi {
         id: i64,
@@ -273,7 +281,10 @@ enum PayrollCmd {
         out: Option<PathBuf>,
     },
     Rates,
-    SetRate { key: String, value: String },
+    SetRate {
+        key: String,
+        value: String,
+    },
     VerifyRate {
         key: String,
         #[arg(long)]
@@ -348,11 +359,17 @@ enum InvoiceCmd {
         notes: Option<String>,
     },
     List,
-    Show { id: i64 },
+    Show {
+        id: i64,
+    },
     /// Assign the invoice number, lock it and propose the ledger voucher (admin only)
-    Issue { id: i64 },
+    Issue {
+        id: i64,
+    },
     /// Delete a draft invoice (admin only)
-    Delete { id: i64 },
+    Delete {
+        id: i64,
+    },
     /// Write the printable invoice as an HTML file (open it in a browser and print to PDF)
     Html {
         id: i64,
@@ -436,14 +453,18 @@ enum DocCmd {
 
 #[derive(Subcommand)]
 enum BankCmd {
-    Import { file: PathBuf },
+    Import {
+        file: PathBuf,
+    },
     List {
         #[arg(long)]
         status: Option<String>,
     },
     /// Re-run matching of receipts against bank lines
     Match,
-    Ignore { id: i64 },
+    Ignore {
+        id: i64,
+    },
     /// Create a draft voucher from a bank line
     Book {
         id: i64,
@@ -470,8 +491,12 @@ enum MatchCmd {
         #[arg(long)]
         status: Option<String>,
     },
-    Confirm { id: i64 },
-    Decline { id: i64 },
+    Confirm {
+        id: i64,
+    },
+    Decline {
+        id: i64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -539,11 +564,19 @@ enum VoucherCmd {
         #[arg(long)]
         to: Option<String>,
     },
-    Show { id: i64 },
-    Approve { id: i64 },
-    Reject { id: i64 },
+    Show {
+        id: i64,
+    },
+    Approve {
+        id: i64,
+    },
+    Reject {
+        id: i64,
+    },
     /// Post a reversing voucher for a posted voucher
-    Correct { id: i64 },
+    Correct {
+        id: i64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -608,7 +641,9 @@ enum TokenCmd {
         save: bool,
     },
     List,
-    Revoke { id: i64 },
+    Revoke {
+        id: i64,
+    },
 }
 
 #[derive(clap::Args, Clone)]
@@ -732,7 +767,11 @@ struct Failure {
 
 impl Failure {
     fn new(code: &str, message: impl Into<String>) -> Self {
-        Self { code: code.into(), message: message.into(), projects: vec![] }
+        Self {
+            code: code.into(),
+            message: message.into(),
+            projects: vec![],
+        }
     }
     fn exit_code(&self) -> i32 {
         match self.code.as_str() {
@@ -758,7 +797,10 @@ fn config_path() -> PathBuf {
         return PathBuf::from(dir).join("config.json");
     }
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".config").join("oas").join("config.json")
+    PathBuf::from(home)
+        .join(".config")
+        .join("oas")
+        .join("config.json")
 }
 
 fn load_config() -> Result<Config, Failure> {
@@ -766,13 +808,21 @@ fn load_config() -> Result<Config, Failure> {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok());
     let field = |env: &str, key: &str| {
-        std::env::var(env)
-            .ok()
-            .or_else(|| stored.as_ref().and_then(|v| v[key].as_str().map(String::from)))
+        std::env::var(env).ok().or_else(|| {
+            stored
+                .as_ref()
+                .and_then(|v| v[key].as_str().map(String::from))
+        })
     };
     match (field("OAS_URL", "url"), field("OAS_TOKEN", "token")) {
-        (Some(url), Some(token)) => Ok(Config { url: url.trim_end_matches('/').into(), token }),
-        _ => Err(Failure::new("auth_required", "not logged in; run `oas auth login <url>`")),
+        (Some(url), Some(token)) => Ok(Config {
+            url: url.trim_end_matches('/').into(),
+            token,
+        }),
+        _ => Err(Failure::new(
+            "auth_required",
+            "not logged in; run `oas auth login <url>`",
+        )),
     }
 }
 
@@ -816,14 +866,21 @@ fn query_string(range: &Range, from: &Option<String>, to: &Option<String>) -> St
     if let Some(a) = &range.activity {
         parts.push(format!("activity={}", encode(a)));
     }
-    if parts.is_empty() { String::new() } else { format!("?{}", parts.join("&")) }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("?{}", parts.join("&"))
+    }
 }
 
 fn resolve_range(r: &Range) -> (Option<String>, Option<String>) {
     let today = Local::now().date_naive();
     if r.week {
         let monday = today - Duration::days(today.weekday().num_days_from_monday() as i64);
-        return (Some(monday.to_string()), Some((monday + Duration::days(6)).to_string()));
+        return (
+            Some(monday.to_string()),
+            Some((monday + Duration::days(6)).to_string()),
+        );
     }
     if r.month {
         let first = today.with_day(1).unwrap_or(today);
@@ -833,16 +890,27 @@ fn resolve_range(r: &Range) -> (Option<String>, Option<String>) {
             chrono::NaiveDate::from_ymd_opt(today.year(), today.month() + 1, 1)
         }
         .unwrap_or(today);
-        return (Some(first.to_string()), Some((next - Duration::days(1)).to_string()));
+        return (
+            Some(first.to_string()),
+            Some((next - Duration::days(1)).to_string()),
+        );
     }
     (r.from.clone(), r.to.clone())
 }
 
 fn agent() -> ureq::Agent {
-    ureq::Agent::config_builder().http_status_as_error(false).build().into()
+    ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into()
 }
 
-fn request(cfg: &Config, method: &str, path: &str, body: Option<&Value>) -> Result<(u16, String), Failure> {
+fn request(
+    cfg: &Config,
+    method: &str,
+    path: &str,
+    body: Option<&Value>,
+) -> Result<(u16, String), Failure> {
     let url = format!("{}/api{}", cfg.url, path);
     let bearer = format!("Bearer {}", cfg.token);
     let a = agent();
@@ -859,7 +927,8 @@ fn request(cfg: &Config, method: &str, path: &str, body: Option<&Value>) -> Resu
             .content_type("application/json")
             .send(b"{}".as_slice()),
     };
-    let mut resp = result.map_err(|e| Failure::new("network", format!("cannot reach {}: {e}", cfg.url)))?;
+    let mut resp =
+        result.map_err(|e| Failure::new("network", format!("cannot reach {}: {e}", cfg.url)))?;
     let status = resp.status().as_u16();
     let text = resp
         .body_mut()
@@ -883,7 +952,12 @@ fn request_bytes(cfg: &Config, path: &str) -> Result<(u16, Vec<u8>), Failure> {
     Ok((status, bytes))
 }
 
-fn post_bytes(cfg: &Config, path: &str, content_type: &str, bytes: &[u8]) -> Result<Value, Failure> {
+fn post_bytes(
+    cfg: &Config,
+    path: &str,
+    content_type: &str,
+    bytes: &[u8],
+) -> Result<Value, Failure> {
     let url = format!("{}/api{}", cfg.url, path);
     let mut resp = agent()
         .post(&url)
@@ -897,14 +971,20 @@ fn post_bytes(cfg: &Config, path: &str, content_type: &str, bytes: &[u8]) -> Res
         .read_to_string()
         .map_err(|e| Failure::new("network", format!("bad response: {e}")))?;
     if (200..300).contains(&status) {
-        serde_json::from_str(&text).map_err(|_| Failure::new("internal", "invalid JSON from server"))
+        serde_json::from_str(&text)
+            .map_err(|_| Failure::new("internal", "invalid JSON from server"))
     } else {
         Err(failure_from(&text))
     }
 }
 
 fn mime_for(path: &std::path::Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).as_deref() {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .as_deref()
+    {
         Some("pdf") => "application/pdf",
         Some("png") => "image/png",
         Some("jpg") | Some("jpeg") => "image/jpeg",
@@ -916,9 +996,21 @@ fn mime_for(path: &std::path::Path) -> &'static str {
     }
 }
 
-fn meta_query(vendor: &Option<String>, amount: &Option<String>, currency: &Option<String>, date: &Option<String>, notes: &Option<String>) -> Vec<String> {
+fn meta_query(
+    vendor: &Option<String>,
+    amount: &Option<String>,
+    currency: &Option<String>,
+    date: &Option<String>,
+    notes: &Option<String>,
+) -> Vec<String> {
     let mut parts = vec![];
-    for (k, v) in [("vendor", vendor), ("amount", amount), ("currency", currency), ("date", date), ("notes", notes)] {
+    for (k, v) in [
+        ("vendor", vendor),
+        ("amount", amount),
+        ("currency", currency),
+        ("date", date),
+        ("notes", notes),
+    ] {
         if let Some(v) = v {
             parts.push(format!("{k}={}", encode(v)));
         }
@@ -931,10 +1023,19 @@ fn failure_from(text: &str) -> Failure {
     let e = &v["error"];
     Failure {
         code: e["code"].as_str().unwrap_or("internal").into(),
-        message: e["message"].as_str().unwrap_or("unexpected server response").into(),
+        message: e["message"]
+            .as_str()
+            .unwrap_or(
+                "the reply is not from an open-accounting-sweden server; check the instance URL (oas auth login <url>)",
+            )
+            .into(),
         projects: e["projects"]
             .as_array()
-            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default(),
     }
 }
@@ -942,7 +1043,8 @@ fn failure_from(text: &str) -> Failure {
 fn call(cfg: &Config, method: &str, path: &str, body: Option<&Value>) -> Result<Value, Failure> {
     let (status, text) = request(cfg, method, path, body)?;
     if (200..300).contains(&status) {
-        serde_json::from_str(&text).map_err(|_| Failure::new("internal", "invalid JSON from server"))
+        serde_json::from_str(&text)
+            .map_err(|_| Failure::new("internal", "invalid JSON from server"))
     } else {
         Err(failure_from(&text))
     }
@@ -964,7 +1066,10 @@ fn post_with_project(cfg: &Config, path: &str, mut body: Value) -> Result<Value,
         match call(cfg, "POST", path, Some(&body)) {
             Ok(v) => return Ok(v),
             Err(f) if interactive && f.code == "project_required" => {
-                eprintln!("No project given. Existing projects: {}", f.projects.join(", "));
+                eprintln!(
+                    "No project given. Existing projects: {}",
+                    f.projects.join(", ")
+                );
                 let name = ask("Project (type a new name to create it): ");
                 if name.is_empty() {
                     return Err(f);
@@ -974,7 +1079,10 @@ fn post_with_project(cfg: &Config, path: &str, mut body: Value) -> Result<Value,
             Err(f) if interactive && f.code == "project_not_found" => {
                 let typed = body["project"].as_str().unwrap_or("").to_string();
                 if f.projects.is_empty() {
-                    if ask(&format!("Project '{typed}' not found. Create it? [y/N] ")).to_lowercase() == "y" {
+                    if ask(&format!("Project '{typed}' not found. Create it? [y/N] "))
+                        .to_lowercase()
+                        == "y"
+                    {
                         body["create_project"] = json!(true);
                     } else {
                         return Err(f);
@@ -1035,7 +1143,14 @@ fn run(cli: Cli) -> Result<(), Failure> {
             }
             Ok(())
         }
-        Cmd::Auth { action: AuthCmd::Login { url, username, token } } => {
+        Cmd::Auth {
+            action:
+                AuthCmd::Login {
+                    url,
+                    username,
+                    token,
+                },
+        } => {
             let url = url.trim_end_matches('/').to_string();
             let token = match (token, username) {
                 (Some(t), _) => t.trim().to_string(),
@@ -1043,23 +1158,39 @@ fn run(cli: Cli) -> Result<(), Failure> {
                     let user = match user {
                         Some(u) => u,
                         None if std::io::stdin().is_terminal() => ask("Username: "),
-                        None => return Err(Failure::new("invalid_input", "give --username or --token")),
+                        None => {
+                            return Err(Failure::new(
+                                "invalid_input",
+                                "give --username or --token",
+                            ));
+                        }
                     };
                     let password = read_password("Password: ")?;
-                    let anon = Config { url: url.clone(), token: String::new() };
+                    let anon = Config {
+                        url: url.clone(),
+                        token: String::new(),
+                    };
                     let body = json!({"username": user, "password": password, "ttl_hours": 720});
                     let v = call(&anon, "POST", "/login", Some(&body))?;
                     v["token"].as_str().unwrap_or_default().to_string()
                 }
             };
-            let cfg = Config { url: url.clone(), token };
+            let cfg = Config {
+                url: url.clone(),
+                token,
+            };
             let me = call(&cfg, "GET", "/me", None)?;
             save_config(&url, &cfg.token)?;
-            print_value(&json!({"status": "ok", "url": url, "username": me["username"],
-                "role": me["role"]}), json_out);
+            print_value(
+                &json!({"status": "ok", "url": url, "username": me["username"],
+                "role": me["role"]}),
+                json_out,
+            );
             Ok(())
         }
-        Cmd::Auth { action: AuthCmd::Logout } => {
+        Cmd::Auth {
+            action: AuthCmd::Logout,
+        } => {
             let cfg = load_config()?;
             let _ = call(&cfg, "POST", "/logout", None);
             let _ = std::fs::remove_file(config_path());
@@ -1081,7 +1212,9 @@ fn run(cli: Cli) -> Result<(), Failure> {
                 UserCmd::Passwd => {
                     let current = read_password("Current password: ")?;
                     let new = read_password("New password (12+ characters): ")?;
-                    if std::io::stdin().is_terminal() && read_password("Repeat new password: ")? != new {
+                    if std::io::stdin().is_terminal()
+                        && read_password("Repeat new password: ")? != new
+                    {
                         return Err(Failure::new("invalid_input", "passwords do not match"));
                     }
                     let body = json!({"current": current, "new": new});
@@ -1098,36 +1231,60 @@ fn run(cli: Cli) -> Result<(), Failure> {
                     if save {
                         let token = v["token"].as_str().unwrap_or_default();
                         save_config(&cfg.url, token)?;
-                        print_value(&json!({"status": "ok", "id": v["id"], "name": v["name"],
-                            "saved": "this machine now uses the permanent token"}), json_out);
+                        print_value(
+                            &json!({"status": "ok", "id": v["id"], "name": v["name"],
+                            "saved": "this machine now uses the permanent token"}),
+                            json_out,
+                        );
                     } else {
                         print_value(&v, json_out);
                     }
                 }
                 TokenCmd::List => print_value(&call(&cfg, "GET", "/tokens", None)?, json_out),
-                TokenCmd::Revoke { id } => {
-                    print_value(&call(&cfg, "POST", &format!("/tokens/{id}/revoke"), None)?, json_out)
-                }
+                TokenCmd::Revoke { id } => print_value(
+                    &call(&cfg, "POST", &format!("/tokens/{id}/revoke"), None)?,
+                    json_out,
+                ),
             }
             Ok(())
         }
-        Cmd::Auth { action: AuthCmd::Status } => {
+        Cmd::Auth {
+            action: AuthCmd::Status,
+        } => {
             let cfg = load_config()?;
             let me = call(&cfg, "GET", "/me", None)?;
-            print_value(&json!({"status": "ok", "url": cfg.url, "username": me["username"],
-                "role": me["role"], "can_approve": me["can_approve"]}), json_out);
+            print_value(
+                &json!({"status": "ok", "url": cfg.url, "username": me["username"],
+                "role": me["role"], "can_approve": me["can_approve"]}),
+                json_out,
+            );
             Ok(())
         }
         Cmd::Time { action } => {
             let cfg = load_config()?;
             match action {
-                TimeCmd::Log { activity, project, date, from, to, message, tz, create_project } => {
+                TimeCmd::Log {
+                    activity,
+                    project,
+                    date,
+                    from,
+                    to,
+                    message,
+                    tz,
+                    create_project,
+                } => {
                     let body = json!({"activity": activity, "project": project, "date": date,
                         "from": from, "to": to, "message": message, "timezone": tz,
                         "create_project": create_project});
                     print_value(&post_with_project(&cfg, "/time", body)?, json_out);
                 }
-                TimeCmd::Start { activity, project, message, tz, create_project } => {
+                TimeCmd::Start {
+                    activity,
+                    project,
+                    message,
+                    tz,
+                    create_project,
+                } => {
                     let body = json!({"activity": activity, "project": project,
                         "message": message, "timezone": tz, "create_project": create_project});
                     print_value(&post_with_project(&cfg, "/time/start", body)?, json_out);
@@ -1135,7 +1292,10 @@ fn run(cli: Cli) -> Result<(), Failure> {
                 TimeCmd::Stop => print_value(&call(&cfg, "POST", "/time/stop", None)?, json_out),
                 TimeCmd::Edit { id, message } => {
                     let body = json!({"message": message});
-                    print_value(&call(&cfg, "POST", &format!("/time/{id}/message"), Some(&body))?, json_out);
+                    print_value(
+                        &call(&cfg, "POST", &format!("/time/{id}/message"), Some(&body))?,
+                        json_out,
+                    );
                 }
                 TimeCmd::List(r) => {
                     let (f, t) = resolve_range(&r);
@@ -1145,15 +1305,22 @@ fn run(cli: Cli) -> Result<(), Failure> {
                 TimeCmd::Report(r) => {
                     let (f, t) = resolve_range(&r);
                     let q = query_string(&r, &f, &t);
-                    print_value(&call(&cfg, "GET", &format!("/time/report{q}"), None)?, json_out);
+                    print_value(
+                        &call(&cfg, "GET", &format!("/time/report{q}"), None)?,
+                        json_out,
+                    );
                 }
                 TimeCmd::Export { range, out, format } => {
                     if format != "csv" {
-                        return Err(Failure::new("invalid_input", "only --format csv is supported"));
+                        return Err(Failure::new(
+                            "invalid_input",
+                            "only --format csv is supported",
+                        ));
                     }
                     let (f, t) = resolve_range(&range);
                     let q = query_string(&range, &f, &t);
-                    let (status, text) = request(&cfg, "GET", &format!("/time/export.csv{q}"), None)?;
+                    let (status, text) =
+                        request(&cfg, "GET", &format!("/time/export.csv{q}"), None)?;
                     if !(200..300).contains(&status) {
                         return Err(failure_from(&text));
                     }
@@ -1161,7 +1328,10 @@ fn run(cli: Cli) -> Result<(), Failure> {
                         Some(path) => {
                             std::fs::write(&path, &text)
                                 .map_err(|e| Failure::new("internal", e.to_string()))?;
-                            print_value(&json!({"status": "ok", "file": path.display().to_string()}), json_out);
+                            print_value(
+                                &json!({"status": "ok", "file": path.display().to_string()}),
+                                json_out,
+                            );
                         }
                         None => print!("{text}"),
                     }
@@ -1172,7 +1342,17 @@ fn run(cli: Cli) -> Result<(), Failure> {
         Cmd::Company { action } => {
             let cfg = load_config()?;
             match action {
-                CompanyCmd::Set { name, org_number, contact_name, contact_phone, contact_email, address, vat_number, payment_info, f_skatt } => {
+                CompanyCmd::Set {
+                    name,
+                    org_number,
+                    contact_name,
+                    contact_phone,
+                    contact_email,
+                    address,
+                    vat_number,
+                    payment_info,
+                    f_skatt,
+                } => {
                     let body = json!({"name": name, "org_number": org_number, "contact_name": contact_name,
                         "contact_phone": contact_phone, "contact_email": contact_email,
                         "address": address.map(|a| a.replace("\\n", "\n")), "vat_number": vat_number,
@@ -1197,12 +1377,21 @@ fn run(cli: Cli) -> Result<(), Failure> {
         Cmd::Voucher { action } => {
             let cfg = load_config()?;
             match action {
-                VoucherCmd::Propose { date, description, counterparty, debits, credits } => {
+                VoucherCmd::Propose {
+                    date,
+                    description,
+                    counterparty,
+                    debits,
+                    credits,
+                } => {
                     let mut lines = vec![];
                     for (list, side) in [(&debits, "debit"), (&credits, "credit")] {
                         for item in list {
                             let (acc, amount) = item.split_once('=').ok_or_else(|| {
-                                Failure::new("invalid_input", format!("expected ACCOUNT=AMOUNT, got '{item}'"))
+                                Failure::new(
+                                    "invalid_input",
+                                    format!("expected ACCOUNT=AMOUNT, got '{item}'"),
+                                )
                             })?;
                             let account: i64 = acc.trim().parse().map_err(|_| {
                                 Failure::new("invalid_input", format!("invalid account '{acc}'"))
@@ -1211,7 +1400,9 @@ fn run(cli: Cli) -> Result<(), Failure> {
                                 Some((a, v)) => (a, Some(v.trim().to_string())),
                                 None => (amount, None),
                             };
-                            lines.push(json!({"account": account, side: amount.trim(), "vat_code": vat}));
+                            lines.push(
+                                json!({"account": account, side: amount.trim(), "vat_code": vat}),
+                            );
                         }
                     }
                     let body = json!({"event_date": date, "description": description,
@@ -1221,23 +1412,38 @@ fn run(cli: Cli) -> Result<(), Failure> {
                 VoucherCmd::Drafts => print_value(&call(&cfg, "GET", "/drafts", None)?, json_out),
                 VoucherCmd::List { from, to } => {
                     let mut parts = vec![];
-                    if let Some(f) = from { parts.push(format!("from={}", encode(&f))); }
-                    if let Some(t) = to { parts.push(format!("to={}", encode(&t))); }
-                    let q = if parts.is_empty() { String::new() } else { format!("?{}", parts.join("&")) };
-                    print_value(&call(&cfg, "GET", &format!("/vouchers{q}"), None)?, json_out);
+                    if let Some(f) = from {
+                        parts.push(format!("from={}", encode(&f)));
+                    }
+                    if let Some(t) = to {
+                        parts.push(format!("to={}", encode(&t)));
+                    }
+                    let q = if parts.is_empty() {
+                        String::new()
+                    } else {
+                        format!("?{}", parts.join("&"))
+                    };
+                    print_value(
+                        &call(&cfg, "GET", &format!("/vouchers{q}"), None)?,
+                        json_out,
+                    );
                 }
-                VoucherCmd::Show { id } => {
-                    print_value(&call(&cfg, "GET", &format!("/vouchers/{id}"), None)?, json_out)
-                }
-                VoucherCmd::Approve { id } => {
-                    print_value(&call(&cfg, "POST", &format!("/drafts/{id}/approve"), None)?, json_out)
-                }
-                VoucherCmd::Reject { id } => {
-                    print_value(&call(&cfg, "POST", &format!("/drafts/{id}/reject"), None)?, json_out)
-                }
-                VoucherCmd::Correct { id } => {
-                    print_value(&call(&cfg, "POST", &format!("/vouchers/{id}/correct"), None)?, json_out)
-                }
+                VoucherCmd::Show { id } => print_value(
+                    &call(&cfg, "GET", &format!("/vouchers/{id}"), None)?,
+                    json_out,
+                ),
+                VoucherCmd::Approve { id } => print_value(
+                    &call(&cfg, "POST", &format!("/drafts/{id}/approve"), None)?,
+                    json_out,
+                ),
+                VoucherCmd::Reject { id } => print_value(
+                    &call(&cfg, "POST", &format!("/drafts/{id}/reject"), None)?,
+                    json_out,
+                ),
+                VoucherCmd::Correct { id } => print_value(
+                    &call(&cfg, "POST", &format!("/vouchers/{id}/correct"), None)?,
+                    json_out,
+                ),
             }
             Ok(())
         }
@@ -1257,16 +1463,31 @@ fn run(cli: Cli) -> Result<(), Failure> {
                 LedgerCmd::Audit => print_value(&call(&cfg, "GET", "/audit", None)?, json_out),
                 LedgerCmd::TrialBalance { year, from, to } => {
                     let mut parts = vec![];
-                    if let Some(y) = year { parts.push(format!("year={y}")); }
-                    if let Some(f) = from { parts.push(format!("from={}", encode(&f))); }
-                    if let Some(t) = to { parts.push(format!("to={}", encode(&t))); }
-                    let q = if parts.is_empty() { String::new() } else { format!("?{}", parts.join("&")) };
-                    print_value(&call(&cfg, "GET", &format!("/reports/trial-balance{q}"), None)?, json_out);
+                    if let Some(y) = year {
+                        parts.push(format!("year={y}"));
+                    }
+                    if let Some(f) = from {
+                        parts.push(format!("from={}", encode(&f)));
+                    }
+                    if let Some(t) = to {
+                        parts.push(format!("to={}", encode(&t)));
+                    }
+                    let q = if parts.is_empty() {
+                        String::new()
+                    } else {
+                        format!("?{}", parts.join("&"))
+                    };
+                    print_value(
+                        &call(&cfg, "GET", &format!("/reports/trial-balance{q}"), None)?,
+                        json_out,
+                    );
                 }
             }
             Ok(())
         }
-        Cmd::Export { action: ExportCmd::Sie { year, out } } => {
+        Cmd::Export {
+            action: ExportCmd::Sie { year, out },
+        } => {
             let cfg = load_config()?;
             let q = year.map(|y| format!("?year={y}")).unwrap_or_default();
             let (status, bytes) = request_bytes(&cfg, &format!("/export/sie{q}"))?;
@@ -1275,12 +1496,18 @@ fn run(cli: Cli) -> Result<(), Failure> {
             }
             match out {
                 Some(path) => {
-                    std::fs::write(&path, &bytes).map_err(|e| Failure::new("internal", e.to_string()))?;
-                    print_value(&json!({"status": "ok", "file": path.display().to_string(),
-                        "bytes": bytes.len()}), json_out);
+                    std::fs::write(&path, &bytes)
+                        .map_err(|e| Failure::new("internal", e.to_string()))?;
+                    print_value(
+                        &json!({"status": "ok", "file": path.display().to_string(),
+                        "bytes": bytes.len()}),
+                        json_out,
+                    );
                 }
                 None => {
-                    std::io::stdout().write_all(&bytes).map_err(|e| Failure::new("internal", e.to_string()))?;
+                    std::io::stdout()
+                        .write_all(&bytes)
+                        .map_err(|e| Failure::new("internal", e.to_string()))?;
                 }
             }
             Ok(())
@@ -1293,20 +1520,28 @@ fn run(cli: Cli) -> Result<(), Failure> {
                     print_value(&call(&cfg, "POST", "/employees", Some(&body))?, json_out);
                 }
                 EmployeeCmd::List => print_value(&call(&cfg, "GET", "/employees", None)?, json_out),
-                EmployeeCmd::Deactivate { id } => {
-                    print_value(&call(&cfg, "POST", &format!("/employees/{id}/deactivate"), None)?, json_out)
-                }
+                EmployeeCmd::Deactivate { id } => print_value(
+                    &call(&cfg, "POST", &format!("/employees/{id}/deactivate"), None)?,
+                    json_out,
+                ),
             }
             Ok(())
         }
         Cmd::Payroll { action } => {
             let cfg = load_config()?;
             match action {
-                PayrollCmd::Run { period, pay_date, lines } => {
+                PayrollCmd::Run {
+                    period,
+                    pay_date,
+                    lines,
+                } => {
                     let mut out = vec![];
                     for item in &lines {
                         let (emp, rest) = item.split_once('=').ok_or_else(|| {
-                            Failure::new("invalid_input", format!("expected EMPLOYEE_ID=GROSS[:TAX], got '{item}'"))
+                            Failure::new(
+                                "invalid_input",
+                                format!("expected EMPLOYEE_ID=GROSS[:TAX], got '{item}'"),
+                            )
                         })?;
                         let employee_id: i64 = emp.trim().parse().map_err(|_| {
                             Failure::new("invalid_input", format!("invalid employee id '{emp}'"))
@@ -1319,7 +1554,10 @@ fn run(cli: Cli) -> Result<(), Failure> {
                         match tax {
                             Some(t) if t.ends_with('%') => {
                                 let p: f64 = t.trim_end_matches('%').parse().map_err(|_| {
-                                    Failure::new("invalid_input", format!("invalid tax percentage '{t}'"))
+                                    Failure::new(
+                                        "invalid_input",
+                                        format!("invalid tax percentage '{t}'"),
+                                    )
                                 })?;
                                 line["tax_percent"] = json!(p);
                             }
@@ -1331,54 +1569,103 @@ fn run(cli: Cli) -> Result<(), Failure> {
                     let body = json!({"period": period, "pay_date": pay_date, "lines": out});
                     print_value(&call(&cfg, "POST", "/payroll/runs", Some(&body))?, json_out);
                 }
-                PayrollCmd::List => print_value(&call(&cfg, "GET", "/payroll/runs", None)?, json_out),
-                PayrollCmd::Show { id } => print_value(&call(&cfg, "GET", &format!("/payroll/runs/{id}"), None)?, json_out),
-                PayrollCmd::Approve { id } => {
-                    print_value(&call(&cfg, "POST", &format!("/payroll/runs/{id}/approve"), None)?, json_out)
+                PayrollCmd::List => {
+                    print_value(&call(&cfg, "GET", "/payroll/runs", None)?, json_out)
                 }
-                PayrollCmd::Delete { id } => {
-                    print_value(&call(&cfg, "POST", &format!("/payroll/runs/{id}/delete"), None)?, json_out)
-                }
+                PayrollCmd::Show { id } => print_value(
+                    &call(&cfg, "GET", &format!("/payroll/runs/{id}"), None)?,
+                    json_out,
+                ),
+                PayrollCmd::Approve { id } => print_value(
+                    &call(&cfg, "POST", &format!("/payroll/runs/{id}/approve"), None)?,
+                    json_out,
+                ),
+                PayrollCmd::Delete { id } => print_value(
+                    &call(&cfg, "POST", &format!("/payroll/runs/{id}/delete"), None)?,
+                    json_out,
+                ),
                 PayrollCmd::Agi { id, out } => {
-                    let (status, bytes) = request_bytes(&cfg, &format!("/payroll/runs/{id}/agi.xml"))?;
+                    let (status, bytes) =
+                        request_bytes(&cfg, &format!("/payroll/runs/{id}/agi.xml"))?;
                     if !(200..300).contains(&status) {
                         return Err(failure_from(&String::from_utf8_lossy(&bytes)));
                     }
                     match out {
                         Some(path) => {
-                            std::fs::write(&path, &bytes).map_err(|e| Failure::new("internal", e.to_string()))?;
-                            print_value(&json!({"status": "ok", "file": path.display().to_string(), "bytes": bytes.len(),
-                                "warning": "UNVERIFIED structure: validate with Skatteverket's AGI test service before use"}), json_out);
+                            std::fs::write(&path, &bytes)
+                                .map_err(|e| Failure::new("internal", e.to_string()))?;
+                            print_value(
+                                &json!({"status": "ok", "file": path.display().to_string(), "bytes": bytes.len(),
+                                "warning": "UNVERIFIED structure: validate with Skatteverket's AGI test service before use"}),
+                                json_out,
+                            );
                         }
-                        None => std::io::stdout().write_all(&bytes).map_err(|e| Failure::new("internal", e.to_string()))?,
+                        None => std::io::stdout()
+                            .write_all(&bytes)
+                            .map_err(|e| Failure::new("internal", e.to_string()))?,
                     }
                 }
-                PayrollCmd::Rates => print_value(&call(&cfg, "GET", "/payroll/rates", None)?, json_out),
+                PayrollCmd::Rates => {
+                    print_value(&call(&cfg, "GET", "/payroll/rates", None)?, json_out)
+                }
                 PayrollCmd::SetRate { key, value } => {
                     let body = json!({"value": value});
-                    print_value(&call(&cfg, "POST", &format!("/payroll/rates/{}", encode(&key)), Some(&body))?, json_out);
+                    print_value(
+                        &call(
+                            &cfg,
+                            "POST",
+                            &format!("/payroll/rates/{}", encode(&key)),
+                            Some(&body),
+                        )?,
+                        json_out,
+                    );
                 }
                 PayrollCmd::NotUsed { key, used } => {
                     let body = json!({"not_used": !used});
-                    print_value(&call(&cfg, "POST", &format!("/payroll/rates/{}/unused", encode(&key)), Some(&body))?, json_out);
+                    print_value(
+                        &call(
+                            &cfg,
+                            "POST",
+                            &format!("/payroll/rates/{}/unused", encode(&key)),
+                            Some(&body),
+                        )?,
+                        json_out,
+                    );
                 }
                 PayrollCmd::VerifyRate { key, unverify } => {
                     let body = json!({"verified": !unverify});
-                    print_value(&call(&cfg, "POST", &format!("/payroll/rates/{}/verify", encode(&key)), Some(&body))?, json_out);
+                    print_value(
+                        &call(
+                            &cfg,
+                            "POST",
+                            &format!("/payroll/rates/{}/verify", encode(&key)),
+                            Some(&body),
+                        )?,
+                        json_out,
+                    );
                 }
             }
             Ok(())
         }
         Cmd::Income { month } => {
             let cfg = load_config()?;
-            let q = month.map(|m| format!("?month={}", encode(&m))).unwrap_or_default();
+            let q = month
+                .map(|m| format!("?month={}", encode(&m)))
+                .unwrap_or_default();
             print_value(&call(&cfg, "GET", &format!("/income{q}"), None)?, json_out);
             Ok(())
         }
         Cmd::Customer { action } => {
             let cfg = load_config()?;
             match action {
-                CustomerCmd::Add { name, org_number, vat_number, address, country, email } => {
+                CustomerCmd::Add {
+                    name,
+                    org_number,
+                    vat_number,
+                    address,
+                    country,
+                    email,
+                } => {
                     let body = json!({"name": name, "org_number": org_number, "vat_number": vat_number,
                         "address": address.map(|a| a.replace("\\n", "\n")), "country": country, "email": email});
                     print_value(&call(&cfg, "POST", "/customers", Some(&body))?, json_out);
@@ -1394,17 +1681,38 @@ fn run(cli: Cli) -> Result<(), Failure> {
                 let wanted = name.trim().to_lowercase();
                 v["customers"]
                     .as_array()
-                    .and_then(|l| l.iter().find(|c| c["name"].as_str().is_some_and(|n| n.to_lowercase() == wanted)))
+                    .and_then(|l| {
+                        l.iter().find(|c| {
+                            c["name"]
+                                .as_str()
+                                .is_some_and(|n| n.to_lowercase() == wanted)
+                        })
+                    })
                     .and_then(|c| c["id"].as_i64())
-                    .ok_or_else(|| Failure::new("not_found", format!("no customer named '{name}'; add it with `oas customer add`")))
+                    .ok_or_else(|| {
+                        Failure::new(
+                            "not_found",
+                            format!("no customer named '{name}'; add it with `oas customer add`"),
+                        )
+                    })
             };
             match action {
-                InvoiceCmd::Create { customer, lines, vat, issue_date, due_days, notes } => {
+                InvoiceCmd::Create {
+                    customer,
+                    lines,
+                    vat,
+                    issue_date,
+                    due_days,
+                    notes,
+                } => {
                     let mut out = vec![];
                     for l in &lines {
                         let p: Vec<&str> = l.split('|').collect();
                         if p.len() != 4 {
-                            return Err(Failure::new("invalid_input", format!("expected DESCRIPTION|QUANTITY|UNIT|UNIT_PRICE, got '{l}'")));
+                            return Err(Failure::new(
+                                "invalid_input",
+                                format!("expected DESCRIPTION|QUANTITY|UNIT|UNIT_PRICE, got '{l}'"),
+                            ));
                         }
                         out.push(json!({"description": p[0].trim(), "quantity": p[1].trim(), "unit": p[2].trim(), "unit_price": p[3].trim()}));
                     }
@@ -1412,22 +1720,47 @@ fn run(cli: Cli) -> Result<(), Failure> {
                         "due_days": due_days, "notes": notes, "lines": out});
                     print_value(&call(&cfg, "POST", "/invoices", Some(&body))?, json_out);
                 }
-                InvoiceCmd::FromTime { customer, project, from, to, vat, due_days, issue_date, notes } => {
+                InvoiceCmd::FromTime {
+                    customer,
+                    project,
+                    from,
+                    to,
+                    vat,
+                    due_days,
+                    issue_date,
+                    notes,
+                } => {
                     let body = json!({"customer_id": customer_id(&customer)?, "project": project, "from": from, "to": to,
                         "vat_rate": vat, "due_days": due_days, "issue_date": issue_date, "notes": notes});
-                    print_value(&call(&cfg, "POST", "/invoices/from-time", Some(&body))?, json_out);
+                    print_value(
+                        &call(&cfg, "POST", "/invoices/from-time", Some(&body))?,
+                        json_out,
+                    );
                 }
                 InvoiceCmd::List => print_value(&call(&cfg, "GET", "/invoices", None)?, json_out),
-                InvoiceCmd::Show { id } => print_value(&call(&cfg, "GET", &format!("/invoices/{id}"), None)?, json_out),
-                InvoiceCmd::Issue { id } => print_value(&call(&cfg, "POST", &format!("/invoices/{id}/issue"), None)?, json_out),
-                InvoiceCmd::Delete { id } => print_value(&call(&cfg, "POST", &format!("/invoices/{id}/delete"), None)?, json_out),
+                InvoiceCmd::Show { id } => print_value(
+                    &call(&cfg, "GET", &format!("/invoices/{id}"), None)?,
+                    json_out,
+                ),
+                InvoiceCmd::Issue { id } => print_value(
+                    &call(&cfg, "POST", &format!("/invoices/{id}/issue"), None)?,
+                    json_out,
+                ),
+                InvoiceCmd::Delete { id } => print_value(
+                    &call(&cfg, "POST", &format!("/invoices/{id}/delete"), None)?,
+                    json_out,
+                ),
                 InvoiceCmd::Html { id, out } => {
                     let (status, bytes) = request_bytes(&cfg, &format!("/invoices/{id}/html"))?;
                     if !(200..300).contains(&status) {
                         return Err(failure_from(&String::from_utf8_lossy(&bytes)));
                     }
-                    std::fs::write(&out, &bytes).map_err(|e| Failure::new("internal", e.to_string()))?;
-                    print_value(&json!({"status": "ok", "file": out.display().to_string(), "bytes": bytes.len()}), json_out);
+                    std::fs::write(&out, &bytes)
+                        .map_err(|e| Failure::new("internal", e.to_string()))?;
+                    print_value(
+                        &json!({"status": "ok", "file": out.display().to_string(), "bytes": bytes.len()}),
+                        json_out,
+                    );
                 }
             }
             Ok(())
@@ -1436,17 +1769,38 @@ fn run(cli: Cli) -> Result<(), Failure> {
             let cfg = load_config()?;
             match action {
                 VatCmd::Report { quarter } => {
-                    let q = quarter.map(|q| format!("?quarter={}", encode(&q))).unwrap_or_default();
-                    print_value(&call(&cfg, "GET", &format!("/vat/report{q}"), None)?, json_out);
+                    let q = quarter
+                        .map(|q| format!("?quarter={}", encode(&q)))
+                        .unwrap_or_default();
+                    print_value(
+                        &call(&cfg, "GET", &format!("/vat/report{q}"), None)?,
+                        json_out,
+                    );
                 }
                 VatCmd::Config => print_value(&call(&cfg, "GET", "/vat/config", None)?, json_out),
                 VatCmd::VerifyBox { vat_box, unverify } => {
                     let body = json!({"verified": !unverify});
-                    print_value(&call(&cfg, "POST", &format!("/vat/boxes/{}/verify", encode(&vat_box)), Some(&body))?, json_out);
+                    print_value(
+                        &call(
+                            &cfg,
+                            "POST",
+                            &format!("/vat/boxes/{}/verify", encode(&vat_box)),
+                            Some(&body),
+                        )?,
+                        json_out,
+                    );
                 }
                 VatCmd::BoxNotUsed { vat_box, used } => {
                     let body = json!({"not_used": !used});
-                    print_value(&call(&cfg, "POST", &format!("/vat/boxes/{}/unused", encode(&vat_box)), Some(&body))?, json_out);
+                    print_value(
+                        &call(
+                            &cfg,
+                            "POST",
+                            &format!("/vat/boxes/{}/unused", encode(&vat_box)),
+                            Some(&body),
+                        )?,
+                        json_out,
+                    );
                 }
                 VatCmd::MapAccount { account, vat_box } => {
                     let body = json!({"account": account, "box": vat_box});
@@ -1458,22 +1812,60 @@ fn run(cli: Cli) -> Result<(), Failure> {
         Cmd::Doc { action } => {
             let cfg = load_config()?;
             match action {
-                DocCmd::Add { file, vendor, amount, currency, date, notes } => {
-                    let bytes = std::fs::read(&file)
-                        .map_err(|e| Failure::new("invalid_input", format!("cannot read {}: {e}", file.display())))?;
-                    let name = file.file_name().and_then(|n| n.to_str()).unwrap_or("upload").to_string();
-                    let mut parts = vec![format!("filename={}", encode(&name)), "source=cli".to_string()];
+                DocCmd::Add {
+                    file,
+                    vendor,
+                    amount,
+                    currency,
+                    date,
+                    notes,
+                } => {
+                    let bytes = std::fs::read(&file).map_err(|e| {
+                        Failure::new(
+                            "invalid_input",
+                            format!("cannot read {}: {e}", file.display()),
+                        )
+                    })?;
+                    let name = file
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("upload")
+                        .to_string();
+                    let mut parts = vec![
+                        format!("filename={}", encode(&name)),
+                        "source=cli".to_string(),
+                    ];
                     parts.extend(meta_query(&vendor, &amount, &currency, &date, &notes));
-                    let v = post_bytes(&cfg, &format!("/documents?{}", parts.join("&")), mime_for(&file), &bytes)?;
+                    let v = post_bytes(
+                        &cfg,
+                        &format!("/documents?{}", parts.join("&")),
+                        mime_for(&file),
+                        &bytes,
+                    )?;
                     print_value(&v, json_out);
                 }
                 DocCmd::List { status } => {
-                    let q = status.map(|s| format!("?status={}", encode(&s))).unwrap_or_default();
-                    print_value(&call(&cfg, "GET", &format!("/documents{q}"), None)?, json_out);
+                    let q = status
+                        .map(|s| format!("?status={}", encode(&s)))
+                        .unwrap_or_default();
+                    print_value(
+                        &call(&cfg, "GET", &format!("/documents{q}"), None)?,
+                        json_out,
+                    );
                 }
-                DocCmd::Meta { id, vendor, amount, currency, date, notes } => {
+                DocCmd::Meta {
+                    id,
+                    vendor,
+                    amount,
+                    currency,
+                    date,
+                    notes,
+                } => {
                     let body = json!({"vendor": vendor, "amount": amount, "currency": currency, "date": date, "notes": notes});
-                    print_value(&call(&cfg, "POST", &format!("/documents/{id}/meta"), Some(&body))?, json_out);
+                    print_value(
+                        &call(&cfg, "POST", &format!("/documents/{id}/meta"), Some(&body))?,
+                        json_out,
+                    );
                 }
                 DocCmd::Download { id, out } => {
                     let (status, bytes) = request_bytes(&cfg, &format!("/documents/{id}/file"))?;
@@ -1482,10 +1874,16 @@ fn run(cli: Cli) -> Result<(), Failure> {
                     }
                     match out {
                         Some(path) => {
-                            std::fs::write(&path, &bytes).map_err(|e| Failure::new("internal", e.to_string()))?;
-                            print_value(&json!({"status": "ok", "file": path.display().to_string(), "bytes": bytes.len()}), json_out);
+                            std::fs::write(&path, &bytes)
+                                .map_err(|e| Failure::new("internal", e.to_string()))?;
+                            print_value(
+                                &json!({"status": "ok", "file": path.display().to_string(), "bytes": bytes.len()}),
+                                json_out,
+                            );
                         }
-                        None => std::io::stdout().write_all(&bytes).map_err(|e| Failure::new("internal", e.to_string()))?,
+                        None => std::io::stdout()
+                            .write_all(&bytes)
+                            .map_err(|e| Failure::new("internal", e.to_string()))?,
                     }
                 }
             }
@@ -1495,24 +1893,52 @@ fn run(cli: Cli) -> Result<(), Failure> {
             let cfg = load_config()?;
             match action {
                 BankCmd::Import { file } => {
-                    let bytes = std::fs::read(&file)
-                        .map_err(|e| Failure::new("invalid_input", format!("cannot read {}: {e}", file.display())))?;
-                    print_value(&post_bytes(&cfg, "/bank/import", "text/csv", &bytes)?, json_out);
+                    let bytes = std::fs::read(&file).map_err(|e| {
+                        Failure::new(
+                            "invalid_input",
+                            format!("cannot read {}: {e}", file.display()),
+                        )
+                    })?;
+                    print_value(
+                        &post_bytes(&cfg, "/bank/import", "text/csv", &bytes)?,
+                        json_out,
+                    );
                 }
                 BankCmd::List { status } => {
-                    let q = status.map(|s| format!("?status={}", encode(&s))).unwrap_or_default();
-                    print_value(&call(&cfg, "GET", &format!("/bank/transactions{q}"), None)?, json_out);
+                    let q = status
+                        .map(|s| format!("?status={}", encode(&s)))
+                        .unwrap_or_default();
+                    print_value(
+                        &call(&cfg, "GET", &format!("/bank/transactions{q}"), None)?,
+                        json_out,
+                    );
                 }
                 BankCmd::Match => print_value(&call(&cfg, "POST", "/bank/match", None)?, json_out),
-                BankCmd::Ignore { id } => {
-                    print_value(&call(&cfg, "POST", &format!("/bank/transactions/{id}/ignore"), None)?, json_out)
-                }
-                BankCmd::Book { id, description, debits, credits, docs, bank_account } => {
+                BankCmd::Ignore { id } => print_value(
+                    &call(
+                        &cfg,
+                        "POST",
+                        &format!("/bank/transactions/{id}/ignore"),
+                        None,
+                    )?,
+                    json_out,
+                ),
+                BankCmd::Book {
+                    id,
+                    description,
+                    debits,
+                    credits,
+                    docs,
+                    bank_account,
+                } => {
                     let mut lines = vec![];
                     for (list, side) in [(&debits, "debit"), (&credits, "credit")] {
                         for item in list {
                             let (acc, amount) = item.split_once('=').ok_or_else(|| {
-                                Failure::new("invalid_input", format!("expected ACCOUNT=AMOUNT, got '{item}'"))
+                                Failure::new(
+                                    "invalid_input",
+                                    format!("expected ACCOUNT=AMOUNT, got '{item}'"),
+                                )
                             })?;
                             let account: i64 = acc.trim().parse().map_err(|_| {
                                 Failure::new("invalid_input", format!("invalid account '{acc}'"))
@@ -1521,12 +1947,22 @@ fn run(cli: Cli) -> Result<(), Failure> {
                                 Some((a, v)) => (a, Some(v.trim().to_string())),
                                 None => (amount, None),
                             };
-                            lines.push(json!({"account": account, side: amount.trim(), "vat_code": vat}));
+                            lines.push(
+                                json!({"account": account, side: amount.trim(), "vat_code": vat}),
+                            );
                         }
                     }
                     let body = json!({"description": description, "lines": lines, "documents": docs,
                         "bank_account": bank_account});
-                    print_value(&call(&cfg, "POST", &format!("/bank/transactions/{id}/book"), Some(&body))?, json_out);
+                    print_value(
+                        &call(
+                            &cfg,
+                            "POST",
+                            &format!("/bank/transactions/{id}/book"),
+                            Some(&body),
+                        )?,
+                        json_out,
+                    );
                 }
             }
             Ok(())
@@ -1535,22 +1971,33 @@ fn run(cli: Cli) -> Result<(), Failure> {
             let cfg = load_config()?;
             match action {
                 MatchCmd::List { status } => {
-                    let q = status.map(|s| format!("?status={}", encode(&s))).unwrap_or_default();
+                    let q = status
+                        .map(|s| format!("?status={}", encode(&s)))
+                        .unwrap_or_default();
                     print_value(&call(&cfg, "GET", &format!("/matches{q}"), None)?, json_out);
                 }
-                MatchCmd::Confirm { id } => {
-                    print_value(&call(&cfg, "POST", &format!("/matches/{id}/confirm"), None)?, json_out)
-                }
-                MatchCmd::Decline { id } => {
-                    print_value(&call(&cfg, "POST", &format!("/matches/{id}/decline"), None)?, json_out)
-                }
+                MatchCmd::Confirm { id } => print_value(
+                    &call(&cfg, "POST", &format!("/matches/{id}/confirm"), None)?,
+                    json_out,
+                ),
+                MatchCmd::Decline { id } => print_value(
+                    &call(&cfg, "POST", &format!("/matches/{id}/decline"), None)?,
+                    json_out,
+                ),
             }
             Ok(())
         }
         Cmd::Project { action } => {
             let cfg = load_config()?;
             match action {
-                ProjectCmd::Add { name, aliases, client, hourly, fixed, currency } => {
+                ProjectCmd::Add {
+                    name,
+                    aliases,
+                    client,
+                    hourly,
+                    fixed,
+                    currency,
+                } => {
                     let (rate_type, rate) = match (hourly, fixed) {
                         (Some(h), _) => (Some("hourly"), Some(h)),
                         (None, Some(f)) => (Some("fixed"), Some(f)),
@@ -1560,28 +2007,59 @@ fn run(cli: Cli) -> Result<(), Failure> {
                         "rate_type": rate_type, "rate": rate, "currency": currency});
                     print_value(&call(&cfg, "POST", "/projects", Some(&body))?, json_out);
                 }
-                ProjectCmd::Rate { project, hourly, fixed, currency, clear } => {
+                ProjectCmd::Rate {
+                    project,
+                    hourly,
+                    fixed,
+                    currency,
+                    clear,
+                } => {
                     let projects = call(&cfg, "GET", "/projects", None)?;
                     let wanted = project.trim().to_lowercase();
                     let found = projects["projects"].as_array().and_then(|list| {
                         list.iter().find(|p| {
-                            p["name"].as_str().is_some_and(|n| n.to_lowercase() == wanted)
-                                || p["aliases"].as_array().is_some_and(|a| a.iter().any(|x| x.as_str().is_some_and(|x| x.to_lowercase() == wanted)))
+                            p["name"]
+                                .as_str()
+                                .is_some_and(|n| n.to_lowercase() == wanted)
+                                || p["aliases"].as_array().is_some_and(|a| {
+                                    a.iter().any(|x| {
+                                        x.as_str().is_some_and(|x| x.to_lowercase() == wanted)
+                                    })
+                                })
                         })
                     });
                     let Some(p) = found else {
-                        let names: Vec<String> = projects["projects"].as_array().map(|l| l.iter().filter_map(|p| p["name"].as_str().map(String::from)).collect()).unwrap_or_default();
-                        return Err(Failure { code: "project_not_found".into(), message: format!("no project named '{project}'"), projects: names });
+                        let names: Vec<String> = projects["projects"]
+                            .as_array()
+                            .map(|l| {
+                                l.iter()
+                                    .filter_map(|p| p["name"].as_str().map(String::from))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        return Err(Failure {
+                            code: "project_not_found".into(),
+                            message: format!("no project named '{project}'"),
+                            projects: names,
+                        });
                     };
                     let id = p["id"].as_i64().unwrap_or(0);
                     let (rate_type, rate) = match (hourly, fixed, clear) {
                         (Some(h), _, false) => ("hourly", Some(h)),
                         (None, Some(f), false) => ("fixed", Some(f)),
                         (None, None, true) => ("none", None),
-                        _ => return Err(Failure::new("invalid_input", "give --hourly AMOUNT, --fixed AMOUNT or --clear")),
+                        _ => {
+                            return Err(Failure::new(
+                                "invalid_input",
+                                "give --hourly AMOUNT, --fixed AMOUNT or --clear",
+                            ));
+                        }
                     };
                     let body = json!({"rate_type": rate_type, "rate": rate, "currency": currency});
-                    print_value(&call(&cfg, "POST", &format!("/projects/{id}/rate"), Some(&body))?, json_out);
+                    print_value(
+                        &call(&cfg, "POST", &format!("/projects/{id}/rate"), Some(&body))?,
+                        json_out,
+                    );
                 }
                 ProjectCmd::List => print_value(&call(&cfg, "GET", "/projects", None)?, json_out),
             }
@@ -1594,23 +2072,67 @@ fn run(cli: Cli) -> Result<(), Failure> {
                     let body = json!({"name": name, "message": message});
                     print_value(&call(&cfg, "POST", "/activities", Some(&body))?, json_out);
                 }
-                ActivityCmd::List => print_value(&call(&cfg, "GET", "/activities", None)?, json_out),
+                ActivityCmd::List => {
+                    print_value(&call(&cfg, "GET", "/activities", None)?, json_out)
+                }
             }
             Ok(())
         }
     }
 }
 
+/// The structured error printed on stderr. Only project errors carry the known projects, so an
+/// agent can ask which one was meant.
+fn error_envelope(f: &Failure) -> Value {
+    let mut error = json!({"code": f.code, "message": f.message});
+    if f.code.starts_with("project_") {
+        error["projects"] = json!(f.projects);
+    }
+    json!({ "error": error })
+}
+
 fn main() {
     let cli = Cli::parse();
     let json_out = cli.json;
     if let Err(f) = run(cli) {
-        let envelope = json!({"error": {"code": f.code, "message": f.message, "projects": f.projects}});
+        let envelope = error_envelope(&f);
         if json_out {
             eprintln!("{}", serde_json::to_string(&envelope).unwrap_or_default());
         } else {
             eprint!("{}", serde_norway::to_string(&envelope).unwrap_or_default());
         }
         std::process::exit(f.exit_code());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_errors_keep_their_code_and_message() {
+        let f = failure_from(r#"{"error":{"code":"forbidden","message":"agents cannot approve"}}"#);
+        assert_eq!(f.code, "forbidden");
+        assert_eq!(f.message, "agents cannot approve");
+        assert_eq!(f.exit_code(), Failure::new("forbidden", "").exit_code());
+    }
+
+    #[test]
+    fn a_reply_from_another_server_points_at_the_url() {
+        let f = failure_from("<html>404 Not Found</html>");
+        assert_eq!(f.code, "internal");
+        assert!(f.message.contains("instance URL"), "{}", f.message);
+    }
+
+    #[test]
+    fn only_project_errors_list_projects() {
+        let auth = error_envelope(&Failure::new("auth_required", "not logged in"));
+        assert!(auth["error"].get("projects").is_none(), "{auth}");
+        let f = failure_from(
+            r#"{"error":{"code":"project_not_found","message":"no project named 'Dmo'","projects":["Demo"]}}"#,
+        );
+        let envelope = error_envelope(&f);
+        assert_eq!(envelope["error"]["projects"], json!(["Demo"]));
+        assert_eq!(f.exit_code(), 2);
     }
 }

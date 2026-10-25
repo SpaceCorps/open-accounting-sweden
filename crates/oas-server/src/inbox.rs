@@ -116,7 +116,9 @@ fn require_admin(actor: &Actor) -> Result<(), ApiError> {
 fn clean(s: &str, field: &str, max: usize) -> Result<String, ApiError> {
     let v = s.trim();
     if v.chars().count() > max || v.chars().any(|c| c.is_control()) {
-        return Err(ApiError::invalid(format!("{field} is too long or has control characters")));
+        return Err(ApiError::invalid(format!(
+            "{field} is too long or has control characters"
+        )));
     }
     Ok(v.to_string())
 }
@@ -125,16 +127,30 @@ fn safe_filename(raw: &str) -> String {
     let base = raw.rsplit(['/', '\\']).next().unwrap_or("");
     let cleaned: String = base
         .chars()
-        .map(|c| if c.is_alphanumeric() || matches!(c, '.' | '_' | '-' | ' ') { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, '.' | '_' | '-' | ' ') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let trimmed = cleaned.trim().trim_start_matches('.').to_string();
     let short: String = trimmed.chars().take(120).collect();
-    if short.is_empty() { "upload".into() } else { short }
+    if short.is_empty() {
+        "upload".into()
+    } else {
+        short
+    }
 }
 
 fn safe_mime(raw: &str) -> String {
     let m = raw.split(';').next().unwrap_or("").trim().to_lowercase();
-    if !m.is_empty() && m.len() <= 100 && m.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '+' | '.' | '-')) {
+    if !m.is_empty()
+        && m.len() <= 100
+        && m.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '+' | '.' | '-'))
+    {
         m
     } else {
         "application/octet-stream".into()
@@ -166,11 +182,26 @@ fn currency(v: &Option<String>) -> Result<String, ApiError> {
     if c.len() == 3 && c.chars().all(|ch| ch.is_ascii_alphabetic()) {
         Ok(c)
     } else {
-        Err(ApiError::invalid("currency must be a three-letter code such as SEK"))
+        Err(ApiError::invalid(
+            "currency must be a three-letter code such as SEK",
+        ))
     }
 }
 
-type DocRow = (String, String, i64, String, String, String, String, Option<String>, Option<i64>, Option<String>, Option<String>, Option<String>);
+type DocRow = (
+    String,
+    String,
+    i64,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
 
 fn doc_json(conn: &Connection, id: i64) -> Result<Value, ApiError> {
     let row: DocRow = conn
@@ -181,8 +212,18 @@ fn doc_json(conn: &Connection, id: i64) -> Result<Value, ApiError> {
             params![id],
             |r| {
                 Ok((
-                    r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
-                    r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?,
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                    r.get(7)?,
+                    r.get(8)?,
+                    r.get(9)?,
+                    r.get(10)?,
+                    r.get(11)?,
                 ))
             },
         )
@@ -235,20 +276,27 @@ pub async fn upload_document(
         return Err(ApiError::invalid("the file is empty"));
     }
     let filename = safe_filename(q.filename.as_deref().unwrap_or("upload"));
-    let mime = safe_mime(headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or(""));
+    let mime = safe_mime(
+        headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(""),
+    );
     let vendor = clean(q.vendor.as_deref().unwrap_or(""), "vendor", 100)?;
     let notes = clean(q.notes.as_deref().unwrap_or(""), "notes", 500)?;
     let amount = opt_amount(&q.amount)?;
     let cur = currency(&q.currency)?;
     let date = opt_date(&q.date)?;
-    let source = match q.source.as_deref() {
-        Some(s @ ("web" | "cli" | "agent")) => s,
-        _ => "api",
-    };
+    let source = q.source.as_deref().unwrap_or("api");
     let sha = format!("{:x}", Sha256::digest(&body));
     let conn = st.conn.lock().unwrap();
-    let existing: Option<i64> =
-        conn.query_row("SELECT id FROM document WHERE sha256 = ?1", params![sha], |r| r.get(0)).ok();
+    let existing: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM document WHERE sha256 = ?1",
+            params![sha],
+            |r| r.get(0),
+        )
+        .ok();
     if let Some(id) = existing {
         let mut v = doc_json(&conn, id)?;
         v["duplicate"] = json!(true);
@@ -258,7 +306,11 @@ pub async fn upload_document(
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| {
             eprintln!("cannot create document dir: {e}");
-            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "could not store the file")
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "could not store the file",
+            )
         })?;
     }
     if !path.exists() {
@@ -267,13 +319,25 @@ pub async fn upload_document(
             .and_then(|_| std::fs::rename(&tmp, &path))
             .map_err(|e| {
                 eprintln!("cannot write document: {e}");
-                ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "could not store the file")
+                ApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    "could not store the file",
+                )
             })?;
     }
     conn.execute(
         "INSERT INTO document(sha256, filename, mime, size, uploaded_by, uploaded_at, source)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![sha, filename, mime, body.len() as i64, actor.name, utc_string(Utc::now()), source],
+        params![
+            sha,
+            filename,
+            mime,
+            body.len() as i64,
+            actor.name,
+            utc_string(Utc::now()),
+            source
+        ],
     )?;
     let id = conn.last_insert_rowid();
     conn.execute(
@@ -309,19 +373,39 @@ pub async fn list_documents(State(st): State<Shared>, Query(f): Query<DocFilter>
     Ok(Json(json!({"documents": docs})))
 }
 
-pub async fn download_document(State(st): State<Shared>, Path(id): Path<i64>) -> Result<Response, ApiError> {
+pub async fn download_document(
+    State(st): State<Shared>,
+    Path(id): Path<i64>,
+) -> Result<Response, ApiError> {
     let (sha, filename, mime): (String, String, String) = {
         let conn = st.conn.lock().unwrap();
-        conn.query_row("SELECT sha256, filename, mime FROM document WHERE id = ?1", params![id], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-        })
+        conn.query_row(
+            "SELECT sha256, filename, mime FROM document WHERE id = ?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
         .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such document"))?
     };
-    let bytes = std::fs::read(doc_path(&st.docs_dir, &sha))
-        .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "not_found", "the stored file is missing"))?;
+    let bytes = std::fs::read(doc_path(&st.docs_dir, &sha)).map_err(|_| {
+        ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "the stored file is missing",
+        )
+    })?;
     // Only types a browser cannot run are labelled as themselves; everything else downloads as binary.
-    let safe = ["application/pdf", "image/png", "image/jpeg", "image/webp", "image/gif"];
-    let ct = if safe.contains(&mime.as_str()) { mime } else { "application/octet-stream".to_string() };
+    let safe = [
+        "application/pdf",
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/gif",
+    ];
+    let ct = if safe.contains(&mime.as_str()) {
+        mime
+    } else {
+        "application/octet-stream".to_string()
+    };
     let mut res = bytes.into_response();
     let h = res.headers_mut();
     h.insert(
@@ -330,8 +414,11 @@ pub async fn download_document(State(st): State<Shared>, Path(id): Path<i64>) ->
     );
     h.insert(
         header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&format!("attachment; filename=\"{}\"", filename.replace('"', "_")))
-            .unwrap_or(HeaderValue::from_static("attachment")),
+        HeaderValue::from_str(&format!(
+            "attachment; filename=\"{}\"",
+            filename.replace('"', "_")
+        ))
+        .unwrap_or(HeaderValue::from_static("attachment")),
     );
     Ok(res)
 }
@@ -357,9 +444,17 @@ pub async fn set_meta(
     let cur = currency(&b.currency)?;
     let date = opt_date(&b.date)?;
     let conn = st.conn.lock().unwrap();
-    let exists: i64 = conn.query_row("SELECT COUNT(*) FROM document WHERE id = ?1", params![id], |r| r.get(0))?;
+    let exists: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM document WHERE id = ?1",
+        params![id],
+        |r| r.get(0),
+    )?;
     if exists == 0 {
-        return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such document"));
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "no such document",
+        ));
     }
     conn.execute(
         "INSERT INTO document_meta(document_id, vendor, amount, currency, doc_date, notes) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -380,9 +475,25 @@ fn tx_json(conn: &Connection, id: i64) -> Result<Value, ApiError> {
             "SELECT booking_date, amount, currency, counterparty, reference, status, imported_at
              FROM bank_transaction WHERE id = ?1",
             params![id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                ))
+            },
         )
-        .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such bank transaction"))?;
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "no such bank transaction",
+            )
+        })?;
     let voucher: Option<String> = conn
         .query_row(
             "SELECT v.series || v.number FROM bank_booking b JOIN voucher v ON v.id = b.voucher_id WHERE b.bank_transaction_id = ?1",
@@ -391,16 +502,22 @@ fn tx_json(conn: &Connection, id: i64) -> Result<Value, ApiError> {
         )
         .ok();
     let draft: Option<i64> = conn
-        .query_row("SELECT draft_id FROM draft_bank WHERE bank_transaction_id = ?1", params![id], |r| r.get(0))
+        .query_row(
+            "SELECT draft_id FROM draft_bank WHERE bank_transaction_id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
         .ok();
     let pending: i64 = conn.query_row(
         "SELECT COUNT(*) FROM match_suggestion WHERE bank_transaction_id = ?1 AND status = 'pending'",
         params![id],
         |r| r.get(0),
     )?;
-    Ok(json!({"id": id, "date": row.0, "amount": format_amount(row.1), "currency": row.2,
+    Ok(
+        json!({"id": id, "date": row.0, "amount": format_amount(row.1), "currency": row.2,
               "counterparty": row.3, "reference": row.4, "status": row.5, "imported_at": row.6,
-              "voucher": voucher, "draft": draft, "pending_matches": pending}))
+              "voucher": voucher, "draft": draft, "pending_matches": pending}),
+    )
 }
 
 pub async fn import_bank(
@@ -414,14 +531,19 @@ pub async fn import_bank(
     let text = String::from_utf8_lossy(&body).into_owned();
     let (rows, errors) = parse_bank_csv(&text).map_err(ApiError::invalid)?;
     if rows.len() > MAX_ROWS {
-        return Err(ApiError::invalid(format!("more than {MAX_ROWS} rows; split the file")));
+        return Err(ApiError::invalid(format!(
+            "more than {MAX_ROWS} rows; split the file"
+        )));
     }
     let mut conn = st.conn.lock().unwrap();
     let tx = conn.transaction()?;
     let (mut imported, mut duplicates) = (0, 0);
     let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for r in &rows {
-        let base = format!("{}|{}|{}|{}|{}", r.date, r.amount, r.currency, r.counterparty, r.reference);
+        let base = format!(
+            "{}|{}|{}|{}|{}",
+            r.date, r.amount, r.currency, r.counterparty, r.reference
+        );
         let n = seen.entry(base.clone()).or_insert(0);
         *n += 1;
         let hash = format!("{:x}", Sha256::digest(format!("{base}|{n}").as_bytes()));
@@ -444,10 +566,18 @@ pub async fn import_bank(
             duplicates += 1;
         }
     }
-    ledger::audit(&tx, &actor, "bank.import", "csv", &format!("{imported} new, {duplicates} duplicates"))?;
+    ledger::audit(
+        &tx,
+        &actor,
+        "bank.import",
+        "csv",
+        &format!("{imported} new, {duplicates} duplicates"),
+    )?;
     tx.commit()?;
     let suggested = run_matching(&conn)?;
-    Ok(Json(json!({"imported": imported, "duplicates": duplicates, "errors": errors, "new_suggestions": suggested})))
+    Ok(Json(
+        json!({"imported": imported, "duplicates": duplicates, "errors": errors, "new_suggestions": suggested}),
+    ))
 }
 
 #[derive(Deserialize, Default)]
@@ -479,9 +609,16 @@ pub async fn ignore_tx(
 ) -> ApiResult {
     require_admin(&actor)?;
     let conn = st.conn.lock().unwrap();
-    let n = conn.execute("UPDATE bank_transaction SET status = 'ignored' WHERE id = ?1 AND status = 'new'", params![id])?;
+    let n = conn.execute(
+        "UPDATE bank_transaction SET status = 'ignored' WHERE id = ?1 AND status = 'new'",
+        params![id],
+    )?;
     if n == 0 {
-        return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "only a new, unbooked transaction can be ignored"));
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            "only a new, unbooked transaction can be ignored",
+        ));
     }
     ledger::audit(&conn, &actor, "bank.ignore", &id.to_string(), "")?;
     Ok(Json(json!({"transaction": tx_json(&conn, id)?})))
@@ -505,14 +642,25 @@ pub(crate) fn run_matching(conn: &Connection) -> Result<usize, ApiError> {
              WHERE NOT EXISTS (SELECT 1 FROM voucher_document v WHERE v.document_id = d.id)
                AND NOT EXISTS (SELECT 1 FROM draft_document x WHERE x.document_id = d.id)",
         )?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
+        .query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })?
         .filter_map(Result::ok)
         .collect();
     let mut added = 0;
     for (txid, date, amount, cur, cp, reference) in &txs {
         let text = format!("{cp} {reference}");
         for (docid, vendor, damount, dcur, ddate) in &docs {
-            let Some(s) = score_match(*amount, cur, date, &text, *damount, dcur, ddate.as_deref(), vendor) else {
+            let Some(s) = score_match(
+                *amount,
+                cur,
+                date,
+                &text,
+                *damount,
+                dcur,
+                ddate.as_deref(),
+                vendor,
+            ) else {
                 continue;
             };
             if s.total < SUGGEST_AT {
@@ -572,9 +720,19 @@ async fn decide(st: Shared, actor: Actor, id: i64, status: &str) -> ApiResult {
         params![status, actor.name, utc_string(Utc::now()), id],
     )?;
     if n == 0 {
-        return Err(ApiError::new(StatusCode::NOT_FOUND, "not_found", "no pending suggestion with that id"));
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "no pending suggestion with that id",
+        ));
     }
-    ledger::audit(&conn, &actor, &format!("match.{status}"), &id.to_string(), "")?;
+    ledger::audit(
+        &conn,
+        &actor,
+        &format!("match.{status}"),
+        &id.to_string(),
+        "",
+    )?;
     Ok(Json(json!({"status": status})))
 }
 
@@ -622,15 +780,29 @@ pub async fn book_tx(
         )
         .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such bank transaction"))?;
     if status != "new" {
-        return Err(ApiError::new(StatusCode::CONFLICT, "conflict", format!("this transaction is already {status}")));
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            format!("this transaction is already {status}"),
+        ));
     }
     let bank_account = b.bank_account.unwrap_or(1930);
     let mut lines = b.lines;
     let bank_amount = format_amount(amount.abs());
     lines.push(if amount < 0 {
-        LineIn { account: bank_account, debit: None, credit: Some(bank_amount), vat_code: None }
+        LineIn {
+            account: bank_account,
+            debit: None,
+            credit: Some(bank_amount),
+            vat_code: None,
+        }
     } else {
-        LineIn { account: bank_account, debit: Some(bank_amount), credit: None, vat_code: None }
+        LineIn {
+            account: bank_account,
+            debit: Some(bank_amount),
+            credit: None,
+            vat_code: None,
+        }
     });
     let mut documents = b.documents;
     let confirmed: Vec<i64> = conn
@@ -643,7 +815,12 @@ pub async fn book_tx(
             documents.push(d);
         }
     }
-    let description = match b.description.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    let description = match b
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         Some(d) => d.to_string(),
         None if !cp.is_empty() => cp.clone(),
         None => reference.clone(),
