@@ -22,7 +22,7 @@ import {
   type DataTableColumn,
 } from "@spacecorps/components/ui";
 import { Banknote, Download, Pencil, Play, Plus, Square } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ApiError,
   api,
@@ -47,16 +47,25 @@ import {
 import { count, hours, money, moneyWhole } from "../format";
 import { entryColumns } from "./shared";
 
+const LAST_PROJECT_KEY = "oas-last-project";
+
 function LogTimeDialog(props: {
   open: boolean;
   mode: "log" | "timer";
   onOpenChange: (o: boolean) => void;
   activities: Activity[];
   projects: Project[];
+  /** The server's pick: this user's last project, else the newest one. */
+  defaultProject: string | null;
   onDone: () => void;
 }) {
   const [activity, setActivity] = useState("meeting");
   const [project, setProject] = useState("");
+  // Start each new entry on the last project used; the browser's memory covers an older server.
+  const { open, defaultProject } = props;
+  useEffect(() => {
+    if (open) setProject(defaultProject ?? localStorage.getItem(LAST_PROJECT_KEY) ?? "");
+  }, [open, defaultProject]);
   const [date, setDate] = useState(today());
   const [from, setFrom] = useState("09:00");
   const [to, setTo] = useState("10:00");
@@ -81,6 +90,7 @@ function LogTimeDialog(props: {
         props.mode === "log" ? "Time logged" : "Timer started",
         `${activity}, ${projectName}`,
       );
+      localStorage.setItem(LAST_PROJECT_KEY, projectName);
       setSuggest(null);
       setMessage("");
       props.onOpenChange(false);
@@ -534,7 +544,7 @@ export function TimePage({ me }: { me: Me }) {
 
   const entries = useData<{ entries: TimeEntry[] }>(`/time?${q}`);
   const report = useData<Report>(`/time/report?${q}`);
-  const projects = useData<{ projects: Project[] }>("/projects");
+  const projects = useData<{ projects: Project[]; default_project?: string | null }>("/projects");
   const activities = useData<{ activities: Activity[] }>("/activities");
   const running = (entries.data?.entries ?? []).find((e) => e.running);
 
@@ -804,6 +814,7 @@ export function TimePage({ me }: { me: Me }) {
         onOpenChange={(o) => !o && setDialog(null)}
         activities={activities.data?.activities ?? []}
         projects={projects.data?.projects ?? []}
+        defaultProject={projects.data?.default_project ?? null}
         onDone={reloadAll}
       />
       <NewProjectDialog

@@ -156,6 +156,15 @@ fn open_db(path: &str) -> Result<Connection, rusqlite::Error> {
             conn.execute_batch(&format!("ALTER TABLE project ADD COLUMN {col} {decl}"))?;
         }
     }
+    // Who logged an entry, so the web form can preselect each user's last project. Older rows have none.
+    let has: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('time_entry') WHERE name = 'created_by'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has == 0 {
+        conn.execute_batch("ALTER TABLE time_entry ADD COLUMN created_by TEXT")?;
+    }
     conn.execute_batch(ledger::SCHEMA)?;
     conn.execute_batch(auth::SCHEMA)?;
     conn.execute_batch(inbox::SCHEMA)?;
@@ -532,9 +541,41 @@ async fn add_activity(State(st): State<Shared>, Json(b): Json<NewActivity>) -> A
     ))
 }
 
-async fn list_projects(State(st): State<Shared>) -> ApiResult {
+async fn list_projects(State(st): State<Shared>, Extension(actor): Extension<Actor>) -> ApiResult {
     let conn = st.conn.lock().unwrap();
-    Ok(Json(json!({"projects": load_projects(&conn)?})))
+    Ok(Json(json!({
+        "projects": load_projects(&conn)?,
+        "default_project": default_project(&conn, &actor.name)?,
+    })))
+}
+
+/// The project a new entry should start on in the web form: the one this user logged last, else the
+/// last one anybody logged, else the newest active project. Archived projects are never suggested.
+/// The CLI does not use this; an entry without a project is still refused there.
+fn default_project(conn: &Connection, user: &str) -> Result<Option<String>, ApiError> {
+    use rusqlite::OptionalExtension;
+    const LAST_ENTRY: &str = "SELECT p.name FROM time_entry t JOIN project p ON p.id = t.project_id
+         WHERE p.archived = 0 AND (?1 IS NULL OR t.created_by = ?1)
+         ORDER BY t.created_at DESC, t.id DESC LIMIT 1";
+    let last = |by: Option<&str>| {
+        conn.query_row(LAST_ENTRY, params![by], |r| r.get(0))
+            .optional()
+    };
+    let newest = || {
+        conn.query_row(
+            "SELECT name FROM project WHERE archived = 0 ORDER BY id DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+    };
+    Ok(match last(Some(user))? {
+        Some(p) => Some(p),
+        None => match last(None)? {
+            Some(p) => Some(p),
+            None => newest()?,
+        },
+    })
 }
 
 #[derive(Deserialize)]
@@ -704,7 +745,11 @@ struct LogEntry {
     timezone: Option<String>,
 }
 
-async fn log_time(State(st): State<Shared>, Json(b): Json<LogEntry>) -> ApiResult {
+async fn log_time(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    Json(b): Json<LogEntry>,
+) -> ApiResult {
     let tz = tz_of(b.timezone.as_deref())?;
     let start = parse_local(&b.date, &b.from, tz).map_err(ApiError::invalid)?;
     let mut end = parse_local(&b.date, &b.to, tz).map_err(ApiError::invalid)?;
@@ -723,8 +768,8 @@ async fn log_time(State(st): State<Shared>, Json(b): Json<LogEntry>) -> ApiResul
     check_overlap(&conn, start, Some(end))?;
     let project_id = resolve_project(&conn, b.project.as_deref(), b.create_project)?;
     conn.execute(
-        "INSERT INTO time_entry(start_utc, end_utc, tz, activity, project_id, message, created_at, source)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'api')",
+        "INSERT INTO time_entry(start_utc, end_utc, tz, activity, project_id, message, created_at, source, created_by)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'api', ?8)",
         params![
             utc_string(start),
             utc_string(end),
@@ -732,7 +777,8 @@ async fn log_time(State(st): State<Shared>, Json(b): Json<LogEntry>) -> ApiResul
             activity,
             project_id,
             message,
-            utc_string(Utc::now())
+            utc_string(Utc::now()),
+            actor.name
         ],
     )?;
     let id = conn.last_insert_rowid();
@@ -750,7 +796,11 @@ struct StartTimer {
     timezone: Option<String>,
 }
 
-async fn start_timer(State(st): State<Shared>, Json(b): Json<StartTimer>) -> ApiResult {
+async fn start_timer(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    Json(b): Json<StartTimer>,
+) -> ApiResult {
     let tz = tz_of(b.timezone.as_deref())?;
     let conn = st.conn.lock().unwrap();
     let running: i64 = conn.query_row(
@@ -771,9 +821,9 @@ async fn start_timer(State(st): State<Shared>, Json(b): Json<StartTimer>) -> Api
     check_overlap(&conn, now, None)?;
     let project_id = resolve_project(&conn, b.project.as_deref(), b.create_project)?;
     conn.execute(
-        "INSERT INTO time_entry(start_utc, end_utc, tz, activity, project_id, message, created_at, source)
-         VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, 'api')",
-        params![utc_string(now), tz.name(), activity, project_id, message, utc_string(now)],
+        "INSERT INTO time_entry(start_utc, end_utc, tz, activity, project_id, message, created_at, source, created_by)
+         VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, 'api', ?7)",
+        params![utc_string(now), tz.name(), activity, project_id, message, utc_string(now), actor.name],
     )?;
     let id = conn.last_insert_rowid();
     let entry = load_entries(&conn)?.into_iter().find(|e| e.id == id);
@@ -1466,6 +1516,53 @@ mod tests {
         let (status, me) = call(&app, Some(token), "GET", "/api/me", None).await;
         assert_eq!(status, 200);
         assert_eq!(me["username"], "astrid");
+    }
+
+    #[tokio::test]
+    async fn the_form_defaults_to_each_users_last_project() {
+        let app = app();
+        let default = |token: &'static str| {
+            let app = app.clone();
+            async move {
+                call(&app, Some(token), "GET", "/api/projects", None)
+                    .await
+                    .1["default_project"]
+                    .clone()
+            }
+        };
+        assert_eq!(default(ADMIN).await, Value::Null, "no projects yet");
+        for name in ["Acme", "Beta", "Gamma"] {
+            call(
+                &app,
+                Some(ADMIN),
+                "POST",
+                "/api/projects",
+                Some(json!({"name": name})),
+            )
+            .await;
+        }
+        assert_eq!(
+            default(ADMIN).await,
+            "Gamma",
+            "no entries: the newest project"
+        );
+        let log = |token: &'static str, project: &'static str, from: &'static str| {
+            let app = app.clone();
+            async move {
+                let body = json!({"activity": "meeting", "project": project, "date": "2026-10-21",
+                    "from": from, "to": format!("{}:30", &from[..2])});
+                assert_eq!(
+                    call(&app, Some(token), "POST", "/api/time", Some(body))
+                        .await
+                        .0,
+                    200
+                );
+            }
+        };
+        log(ADMIN, "Acme", "09:00").await;
+        log(AGENT, "Beta", "11:00").await;
+        assert_eq!(default(ADMIN).await, "Acme", "the admin's own last entry");
+        assert_eq!(default(AGENT).await, "Beta", "the agent's own last entry");
     }
 
     #[test]

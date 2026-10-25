@@ -9,7 +9,7 @@ import {
   Label,
 } from "@spacecorps/components/ui";
 import { toast } from "@spacecorps/components";
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { ApiError } from "./api";
 
 export function PageHeader({
@@ -90,14 +90,16 @@ export function Field({
   label,
   children,
   hint,
+  htmlFor,
 }: {
   label: string;
   children: ReactNode;
   hint?: string;
+  htmlFor?: string;
 }) {
   return (
     <div className="oas-field">
-      <Label>{label}</Label>
+      <Label htmlFor={htmlFor}>{label}</Label>
       {children}
       {hint ? <span className="oas-muted oas-hint">{hint}</span> : null}
     </div>
@@ -112,14 +114,25 @@ export function TextField(props: {
   placeholder?: string;
   hint?: string;
   autoComplete?: string;
+  /** Form field name; password managers use it with autoComplete to recognise sign-in forms. */
+  name?: string;
+  /** For names, codes and usernames: no spellcheck, autocorrect or capitalisation. */
+  verbatim?: boolean;
 }) {
+  const generated = useId();
+  const id = props.name ?? generated;
   return (
-    <Field label={props.label} hint={props.hint}>
+    <Field label={props.label} hint={props.hint} htmlFor={id}>
       <Input
+        id={id}
+        name={props.name}
         type={props.type ?? "text"}
         value={props.value}
         placeholder={props.placeholder}
         autoComplete={props.autoComplete}
+        {...(props.verbatim
+          ? { spellCheck: false, autoCorrect: "off", autoCapitalize: "none" }
+          : {})}
         onChange={(e) => props.onChange(e.target.value)}
       />
     </Field>

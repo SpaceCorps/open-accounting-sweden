@@ -90,13 +90,16 @@ function Login({ onDone }: { onDone: () => void }) {
           <form className="oas-form" onSubmit={submit}>
             <TextField
               label="Username"
+              name="username"
               value={username}
               onChange={setUsername}
               autoComplete="username"
+              verbatim
             />
             <TextField
               label="Password"
               type="password"
+              name="password"
               value={password}
               onChange={setPassword}
               autoComplete="current-password"
