@@ -5,6 +5,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  DatePicker,
   Input,
   Label,
 } from "@spacecorps/components/ui";
@@ -121,6 +122,14 @@ export function TextField(props: {
 }) {
   const generated = useId();
   const id = props.name ?? generated;
+  if (props.type === "date") {
+    // The library's picker shows yyyy-mm-dd whatever the browser locale, with one Tab stop.
+    return (
+      <Field label={props.label} hint={props.hint} htmlFor={id}>
+        <DatePicker id={id} name={props.name} value={props.value} onChange={props.onChange} />
+      </Field>
+    );
+  }
   return (
     <Field label={props.label} hint={props.hint} htmlFor={id}>
       <Input
