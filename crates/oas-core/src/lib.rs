@@ -199,6 +199,19 @@ pub fn parse_amount(input: &str) -> Result<i64, String> {
 }
 
 /// Format öre as a decimal string with two decimals, e.g. 125050 -> "1250.50".
+/// Swedish text with å, ä and ö replaced by a and o, as names were stored before they had them.
+pub fn ascii_fold(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            'å' | 'ä' => 'a',
+            'Å' | 'Ä' => 'A',
+            'ö' => 'o',
+            'Ö' => 'O',
+            c => c,
+        })
+        .collect()
+}
+
 pub fn format_amount(ore: i64) -> String {
     let sign = if ore < 0 { "-" } else { "" };
     let a = ore.abs();
@@ -620,6 +633,12 @@ mod tests {
         assert_eq!(to_cp437("åäö"), vec![0x86, 0x84, 0x94]);
         assert_eq!(to_cp437("ÅÄÖ"), vec![0x8F, 0x8E, 0x99]);
         assert_eq!(to_cp437("abc"), b"abc".to_vec());
+    }
+
+    #[test]
+    fn ascii_fold_drops_swedish_letters() {
+        assert_eq!(ascii_fold("Löner till tjänstemän"), "Loner till tjansteman");
+        assert_eq!(ascii_fold("Åter Ärende Öre"), "Ater Arende Ore");
     }
 
     #[test]

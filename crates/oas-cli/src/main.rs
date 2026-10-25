@@ -1025,7 +1025,9 @@ fn failure_from(text: &str) -> Failure {
         code: e["code"].as_str().unwrap_or("internal").into(),
         message: e["message"]
             .as_str()
-            .unwrap_or("unexpected server response")
+            .unwrap_or(
+                "the reply is not from an open-accounting-sweden server; check the instance URL (oas auth login <url>)",
+            )
             .into(),
         projects: e["projects"]
             .as_array()
@@ -2083,8 +2085,12 @@ fn main() {
     let cli = Cli::parse();
     let json_out = cli.json;
     if let Err(f) = run(cli) {
-        let envelope =
-            json!({"error": {"code": f.code, "message": f.message, "projects": f.projects}});
+        let mut error = json!({"code": f.code, "message": f.message});
+        // Only project errors carry the known projects, so an agent can ask which one was meant.
+        if f.code.starts_with("project_") {
+            error["projects"] = json!(f.projects);
+        }
+        let envelope = json!({ "error": error });
         if json_out {
             eprintln!("{}", serde_json::to_string(&envelope).unwrap_or_default());
         } else {

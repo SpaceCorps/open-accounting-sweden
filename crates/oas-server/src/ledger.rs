@@ -108,29 +108,29 @@ CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit_log
 // Names are informal; BAS licensing for bundling the full plan is still an open question.
 const SEED: &[(i64, &str, &str)] = &[
     (1510, "Kundfordringar", "T"),
-    (1930, "Foretagskonto", "T"),
+    (1930, "Företagskonto", "T"),
     (2081, "Aktiekapital", "S"),
-    (2091, "Balanserad vinst eller forlust", "S"),
-    (2440, "Leverantorsskulder", "S"),
-    (2611, "Utgaende moms forsaljning Sverige 25 procent", "S"),
-    (2614, "Utgaende moms omvand skattskyldighet 25 procent", "S"),
-    (2641, "Debiterad ingaende moms", "S"),
-    (2645, "Beraknad ingaende moms forvarv fran utlandet", "S"),
+    (2091, "Balanserad vinst eller förlust", "S"),
+    (2440, "Leverantörsskulder", "S"),
+    (2611, "Utgående moms försäljning Sverige 25 procent", "S"),
+    (2614, "Utgående moms omvänd skattskyldighet 25 procent", "S"),
+    (2641, "Debiterad ingående moms", "S"),
+    (2645, "Beräknad ingående moms förvärv från utlandet", "S"),
     (2710, "Personalskatt", "S"),
-    (2731, "Avrakning lagstadgade sociala avgifter", "S"),
-    (3041, "Forsaljning tjanster Sverige 25 procent moms", "I"),
-    (3042, "Forsaljning tjanster Sverige 12 procent moms", "I"),
-    (3043, "Forsaljning tjanster Sverige 6 procent moms", "I"),
-    (5410, "Forbrukningsinventarier", "K"),
-    (2621, "Utgaende moms forsaljning Sverige 12 procent", "S"),
-    (2624, "Utgaende moms omvand skattskyldighet 12 procent", "S"),
-    (2631, "Utgaende moms forsaljning Sverige 6 procent", "S"),
-    (2634, "Utgaende moms omvand skattskyldighet 6 procent", "S"),
-    (2640, "Ingaende moms", "S"),
-    (2650, "Redovisningskonto for moms", "S"),
-    (6540, "IT-tjanster", "K"),
+    (2731, "Avräkning lagstadgade sociala avgifter", "S"),
+    (3041, "Försäljning tjänster Sverige 25 procent moms", "I"),
+    (3042, "Försäljning tjänster Sverige 12 procent moms", "I"),
+    (3043, "Försäljning tjänster Sverige 6 procent moms", "I"),
+    (5410, "Förbrukningsinventarier", "K"),
+    (2621, "Utgående moms försäljning Sverige 12 procent", "S"),
+    (2624, "Utgående moms omvänd skattskyldighet 12 procent", "S"),
+    (2631, "Utgående moms försäljning Sverige 6 procent", "S"),
+    (2634, "Utgående moms omvänd skattskyldighet 6 procent", "S"),
+    (2640, "Ingående moms", "S"),
+    (2650, "Redovisningskonto för moms", "S"),
+    (6540, "IT-tjänster", "K"),
     (6570, "Bankkostnader", "K"),
-    (7210, "Loner till tjansteman", "K"),
+    (7210, "Löner till tjänstemän", "K"),
     (7510, "Lagstadgade sociala avgifter", "K"),
 ];
 
@@ -139,6 +139,12 @@ pub fn seed(conn: &Connection) -> rusqlite::Result<()> {
         conn.execute(
             "INSERT OR IGNORE INTO account(number, name, kind) VALUES (?1, ?2, ?3)",
             params![n, name, kind],
+        )?;
+        // Books created before the names were spelled with å, ä and ö keep the ASCII spelling;
+        // update only names nobody has changed since.
+        conn.execute(
+            "UPDATE account SET name = ?1 WHERE number = ?2 AND name = ?3",
+            params![name, n, oas_core::ascii_fold(name)],
         )?;
     }
     Ok(())

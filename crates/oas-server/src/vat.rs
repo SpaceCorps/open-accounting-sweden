@@ -45,53 +45,48 @@ const MEMORY: &str = "general knowledge of form SKV 4700; no source checked";
 
 // (box, label, kind, source)
 const BOXES: &[(&str, &str, &str, &str)] = &[
-    ("05", "Momspliktig forsaljning (excl. VAT)", "base", MEMORY),
-    ("10", "Utgaende moms 25 procent", "output", MEMORY),
-    ("11", "Utgaende moms 12 procent", "output", MEMORY),
-    ("12", "Utgaende moms 6 procent", "output", MEMORY),
+    ("05", "Momspliktig försäljning (exkl. moms)", "base", MEMORY),
+    ("10", "Utgående moms 25 procent", "output", MEMORY),
+    ("11", "Utgående moms 12 procent", "output", MEMORY),
+    ("12", "Utgående moms 6 procent", "output", MEMORY),
     (
         "21",
-        "Inkop tjanster fran annat EU-land (omvand skattskyldighet)",
+        "Inköp av tjänster från ett annat EU-land (omvänd skattskyldighet)",
         "base",
         RESEARCH,
     ),
     (
         "22",
-        "Inkop tjanster fran land utanfor EU (omvand skattskyldighet)",
+        "Inköp av tjänster från ett land utanför EU (omvänd skattskyldighet)",
         "base",
         RESEARCH,
     ),
     (
         "30",
-        "Utgaende moms 25 procent, omvand skattskyldighet",
+        "Utgående moms 25 procent, omvänd skattskyldighet",
         "output",
         RESEARCH,
     ),
     (
         "31",
-        "Utgaende moms 12 procent, omvand skattskyldighet",
+        "Utgående moms 12 procent, omvänd skattskyldighet",
         "output",
         RESEARCH,
     ),
     (
         "32",
-        "Utgaende moms 6 procent, omvand skattskyldighet",
+        "Utgående moms 6 procent, omvänd skattskyldighet",
         "output",
         RESEARCH,
     ),
     (
         "39",
-        "Forsaljning tjanster till annat EU-land",
+        "Försäljning av tjänster till ett annat EU-land",
         "base",
         RESEARCH,
     ),
-    ("48", "Ingaende moms att dra av", "input", RESEARCH),
-    (
-        "49",
-        "Moms att betala (+) eller fa tillbaka (-)",
-        "result",
-        MEMORY,
-    ),
+    ("48", "Ingående moms att dra av", "input", RESEARCH),
+    ("49", "Moms att betala eller få tillbaka", "result", MEMORY),
 ];
 
 // (code, label, base box, base side)
@@ -162,6 +157,11 @@ pub fn seed(conn: &Connection) -> rusqlite::Result<()> {
         conn.execute(
             "INSERT OR IGNORE INTO vat_box(box, label, kind, source) VALUES (?1, ?2, ?3, ?4)",
             params![b, label, kind, source],
+        )?;
+        // Labels are not editable, so keep them in step with the code (earlier versions had no å, ä, ö).
+        conn.execute(
+            "UPDATE vat_box SET label = ?1 WHERE box = ?2",
+            params![label, b],
         )?;
     }
     for (code, label, bb, side) in CODES {
