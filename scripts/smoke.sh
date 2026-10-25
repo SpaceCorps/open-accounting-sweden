@@ -60,7 +60,7 @@ check "the same hours cannot be invoiced twice" '! admin invoice from-time --cus
 check "an agent cannot issue an invoice" '! agent invoice issue 1'
 check "a customer without an address blocks issuing" 'admin invoice create --customer "Utan Adress AB" --line "Konsult|1|st|100" >/dev/null && ! admin invoice issue 2'
 check "issuing numbers the invoice F1 and proposes a voucher" 'admin --json invoice issue 1 | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d[\"invoice\"][\"label\"]==\"F1\" and d[\"invoice\"][\"status\"]==\"issued\" and d[\"invoice\"][\"ledger_draft_id\"] else 1)"'
-check "an issued invoice cannot be edited or deleted" 'refused "UPDATE invoice SET due_date = \"2030-01-01\" WHERE id = 1" "an issued invoice cannot be changed" && ! admin invoice delete 1'
+check "an issued invoice cannot be edited or deleted" 'refused "UPDATE invoice SET due_date = issue_date WHERE id = 1" "an issued invoice cannot be changed" && ! admin invoice delete 1'
 check "the printable invoice has the required fields" 'admin invoice html 1 --out $T/inv.html >/dev/null && grep -q "Invoice F1" $T/inv.html && grep -q "VAT no: SE5560269986" $T/inv.html && grep -q "Kund AB" $T/inv.html && grep -q "225.00" $T/inv.html'
 check "customer names cannot inject markup into the invoice" 'admin customer add "<script>x</script> AB" --address "Gatan 1" >/dev/null && admin invoice create --customer "<script>x</script> AB" --line "x|1|st|1" >/dev/null && admin invoice html 3 --out $T/inv2.html >/dev/null && ! grep -q "<script>x" $T/inv2.html'
 check "foreign customers are refused for now" '! admin customer add "Foreign Ltd" --country DE --address "Strasse 1" >/dev/null || ! admin invoice create --customer "Foreign Ltd" --line "x|1|st|1"'
@@ -72,7 +72,7 @@ check "bank CSV re-import adds nothing" 'admin --json bank import $T/b.csv | pyt
 check "receipt uploads and duplicates are detected" 'admin doc add $T/r.txt --vendor GitHub --amount 40 --date 2026-10-21 >/dev/null && admin --json doc add $T/r.txt | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin)[\"document\"][\"duplicate\"] else 1)"'
 check "a receipt matches its bank line" 'admin --json match list | python3 -c "import sys,json; sys.exit(0 if len(json.load(sys.stdin)[\"matches\"])==1 else 1)"'
 check "agent cannot confirm a match" '! agent match confirm 1'
-check "receipts cannot be edited" 'refused "UPDATE document SET filename = \"x\"" "receipts are immutable"'
+check "receipts cannot be edited" 'refused "UPDATE document SET filename = id" "receipts are immutable"'
 
 check "an agent cannot add an employee" '! agent employee add Anna --identity 200407204567'
 check "a bad personnummer is rejected" '! admin employee add Bad --identity 198503141234'
