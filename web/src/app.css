@@ -18,6 +18,7 @@ body {
   max-width: 1400px;
   width: 100%;
   margin: 0 auto;
+  container-type: inline-size;
 }
 .oas-brand {
   display: flex;
@@ -63,19 +64,41 @@ body {
   gap: 0.5rem;
   align-items: center;
 }
+/* KPI cards share one row when there is room, else two columns, never a lone card on a row. */
 .oas-kpis {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 1rem;
+}
+@container (min-width: 480px) {
+  .oas-kpis-2,
+  .oas-kpis-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container (min-width: 640px) {
+  .oas-kpis-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@container (min-width: 860px) {
+  .oas-kpis-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 .oas-kpi-value {
   font-size: 1.875rem;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .oas-kpi-hint {
   display: flex;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  gap: 0.375rem 0.5rem;
   align-items: center;
+}
+.oas-kpi-hint > * {
+  white-space: nowrap;
 }
 .oas-grid-2 {
   display: grid;
@@ -123,6 +146,12 @@ body {
   display: grid;
   place-items: center;
   padding: 1.5rem;
+}
+.oas-login-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-bottom: 0.25rem;
 }
 .oas-login-card {
   width: 100%;

@@ -37,6 +37,7 @@ import {
   notifyOk,
   type VatCode,
 } from "../kit";
+import { amount } from "../format";
 import { DraftsTable, VouchersTable } from "./shared";
 
 interface DraftLine {
@@ -178,7 +179,7 @@ function NewDraftDialog({
                   <Plus /> Add line
                 </Button>
                 <Badge variant={balanced ? "success" : "warning"}>
-                  debit {debit.toFixed(2)} / credit {credit.toFixed(2)}{" "}
+                  debit {amount(debit)} / credit {amount(credit)}{" "}
                   {balanced ? "balanced" : "not balanced"}
                 </Badge>
               </div>
@@ -377,7 +378,7 @@ export function Ledger({ me }: { me: Me }) {
         }
       />
 
-      <div className="oas-kpis">
+      <div className="oas-kpis oas-kpis-3">
         <Kpi label="Posted vouchers" value={vouchers.data?.vouchers.length ?? 0} />
         <Kpi
           label="Drafts to approve"
@@ -423,7 +424,7 @@ export function Ledger({ me }: { me: Me }) {
                 vouchers={vouchers.data?.vouchers ?? []}
                 canCorrect={me.can_approve}
                 onChanged={refresh}
-                pageSize={15}
+                pageSize={25}
               />
             )}
           </Section>
@@ -498,7 +499,7 @@ export function Ledger({ me }: { me: Me }) {
               columns={accountColumns}
               rows={accounts.data?.accounts ?? []}
               getRowId={(a) => String(a.number)}
-              defaultPageSize={15}
+              defaultPageSize={25}
             />
           </Section>
         </TabsContent>
@@ -511,7 +512,7 @@ export function Ledger({ me }: { me: Me }) {
               columns={auditColumns}
               rows={audit.data?.audit ?? []}
               getRowId={(r) => `${r.at}-${r.action}-${r.object}`}
-              defaultPageSize={15}
+              defaultPageSize={25}
             />
           </Section>
         </TabsContent>

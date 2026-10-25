@@ -46,6 +46,7 @@ import {
   notifyOk,
   type VatCode,
 } from "../kit";
+import { amount, count, money } from "../format";
 
 interface Row {
   account: string;
@@ -200,7 +201,7 @@ function BookDialog(props: {
                 <Plus /> Add line
               </Button>
               <Badge variant={balanced ? "success" : "warning"}>
-                other lines net {net.toFixed(2)}, bank {total.toFixed(2)}{" "}
+                other lines net {amount(net)}, bank {amount(total)}{" "}
                 {balanced ? "balanced" : "not balanced"}
               </Badge>
             </div>
@@ -219,7 +220,7 @@ function BookDialog(props: {
                     />
                     <span>{d.filename}</span>
                     <span className="oas-muted">
-                      {d.vendor} {d.amount ? `${d.amount} ${d.currency}` : ""} {d.date ?? ""}
+                      {d.vendor} {d.amount ? money(d.amount, d.currency) : ""} {d.date ?? ""}
                     </span>
                     {props.confirmedDocIds.includes(d.id) ? (
                       <Badge variant="success">confirmed match</Badge>
@@ -318,7 +319,7 @@ export function BankPage({ me }: { me: Me }) {
     }
   }
 
-  const money = (t: BankTx) => `${t.amount} ${t.currency}`;
+  const txMoney = (t: BankTx) => money(t.amount, t.currency);
   const txColumns: DataTableColumn<BankTx>[] = [
     { name: "date", header: "Date", width: "120px" },
     { name: "counterparty", header: "Counterparty" },
@@ -328,7 +329,7 @@ export function BankPage({ me }: { me: Me }) {
       header: "Amount",
       align: "Right",
       accessor: (t) => parseFloat(t.amount),
-      cell: (_, t) => money(t),
+      cell: (_, t) => txMoney(t),
     },
     {
       name: "state",
@@ -339,7 +340,7 @@ export function BankPage({ me }: { me: Me }) {
           : t.draft
             ? `draft ${t.draft}`
             : t.pending_matches
-              ? `${t.pending_matches} suggestion`
+              ? count(t.pending_matches, "suggestion")
               : t.status,
       cell: (v, t) => (
         <Badge
@@ -382,7 +383,7 @@ export function BankPage({ me }: { me: Me }) {
       accessor: (m) => m.score,
       cell: (v) => (
         <Badge variant={(v as number) >= 0.9 ? "success" : "warning"}>
-          {(v as number).toFixed(2)}
+          {Math.round((v as number) * 100)}%
         </Badge>
       ),
     },
@@ -390,14 +391,15 @@ export function BankPage({ me }: { me: Me }) {
       name: "bank",
       header: "Bank line",
       accessor: (m) => `${m.transaction.date} ${m.transaction.counterparty}`,
-      cell: (_, m) => `${m.transaction.date} ${m.transaction.counterparty} ${money(m.transaction)}`,
+      cell: (_, m) =>
+        `${m.transaction.date} ${m.transaction.counterparty} ${txMoney(m.transaction)}`,
     },
     {
       name: "receipt",
       header: "Receipt",
       accessor: (m) => m.document.filename,
       cell: (_, m) =>
-        `${m.document.filename}: ${m.document.vendor} ${m.document.amount ?? ""} ${m.document.date ?? ""}`,
+        `${m.document.filename}: ${m.document.vendor} ${m.document.amount ? money(m.document.amount, m.document.currency) : ""} ${m.document.date ?? ""}`,
     },
     {
       name: "why",
@@ -448,7 +450,7 @@ export function BankPage({ me }: { me: Me }) {
           </>
         }
       />
-      <div className="oas-kpis">
+      <div className="oas-kpis oas-kpis-3">
         <Kpi
           label="To book"
           value={byStatus("new").length}
@@ -487,7 +489,7 @@ export function BankPage({ me }: { me: Me }) {
                 onRowAction={({ tag, row }) =>
                   tag === "book" ? setBooking(row) : void ignore(row)
                 }
-                defaultPageSize={15}
+                defaultPageSize={25}
                 caption="Bank lines to book"
               />
             )}
@@ -528,7 +530,7 @@ export function BankPage({ me }: { me: Me }) {
                 columns={txColumns}
                 rows={byStatus("booked")}
                 getRowId={(t) => String(t.id)}
-                defaultPageSize={15}
+                defaultPageSize={25}
               />
             )}
           </Section>
@@ -542,7 +544,7 @@ export function BankPage({ me }: { me: Me }) {
                 columns={txColumns}
                 rows={byStatus("ignored")}
                 getRowId={(t) => String(t.id)}
-                defaultPageSize={15}
+                defaultPageSize={25}
               />
             )}
           </Section>

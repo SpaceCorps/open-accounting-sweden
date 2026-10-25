@@ -41,10 +41,10 @@ import {
   PageHeader,
   Section,
   TextField,
-  hoursText,
   notifyError,
   notifyOk,
 } from "../kit";
+import { count, hours, money, moneyWhole } from "../format";
 import { entryColumns } from "./shared";
 
 function LogTimeDialog(props: {
@@ -199,8 +199,8 @@ function LogTimeDialog(props: {
 }
 
 function rateText(p: Project) {
-  if (p.rate_type === "hourly" && p.rate) return `${p.rate} ${p.currency} / hour`;
-  if (p.rate_type === "fixed" && p.rate) return `${p.rate} ${p.currency} fixed`;
+  if (p.rate_type === "hourly" && p.rate) return `${money(p.rate, p.currency)} / hour`;
+  if (p.rate_type === "fixed" && p.rate) return `${money(p.rate, p.currency)} fixed`;
   return "";
 }
 
@@ -578,15 +578,16 @@ export function TimePage({ me }: { me: Me }) {
       header: "Hours (range)",
       align: "Right",
       accessor: (p) => report.data?.by_project[p.name] ?? 0,
-      cell: (v) => (v as number).toFixed(2),
+      cell: (v) => hours(v as number),
     },
     {
       name: "amount",
       header: "Amount (range)",
       align: "Right",
-      accessor: (p) => {
+      accessor: (p) => parseFloat(report.data?.amount_by_project[p.name]?.amount ?? "0"),
+      cell: (_, p) => {
         const a = report.data?.amount_by_project[p.name];
-        return a ? `${a.amount} ${a.currency}` : "";
+        return a ? money(a.amount, a.currency) : "—";
       },
     },
     {
@@ -604,7 +605,7 @@ export function TimePage({ me }: { me: Me }) {
       header: "Hours (range)",
       align: "Right",
       accessor: (a) => report.data?.by_activity[a.name] ?? 0,
-      cell: (v) => (v as number).toFixed(2),
+      cell: (v) => hours(v as number),
     },
   ];
 
@@ -679,18 +680,18 @@ export function TimePage({ me }: { me: Me }) {
         </Field>
       </div>
 
-      <div className="oas-kpis">
+      <div className="oas-kpis oas-kpis-4">
         <Kpi
           label="Total hours"
-          value={hoursText(report.data?.total_hours ?? 0)}
-          hint={`${report.data?.entries ?? 0} entries`}
+          value={hours(report.data?.total_hours ?? 0)}
+          hint={count(report.data?.entries ?? 0, "entry", "entries")}
         />
         <Kpi
           label="Billable amount"
           value={
             Object.entries(report.data?.total_amount ?? {})
-              .map(([c, a]) => `${a} ${c}`)
-              .join(" + ") || "0.00"
+              .map(([c, a]) => moneyWhole(a, c))
+              .join(" + ") || moneyWhole(0)
           }
           hint="hourly rates and fixed fees, in range"
         />
@@ -720,12 +721,14 @@ export function TimePage({ me }: { me: Me }) {
               <DataTable
                 columns={entryColumns.map((c) =>
                   c.name === "hours"
-                    ? { ...c, footer: (report.data?.total_hours ?? 0).toFixed(2) }
-                    : c,
+                    ? { ...c, footer: hours(report.data?.total_hours ?? 0) }
+                    : c.name === "date"
+                      ? { ...c, footer: "Total" }
+                      : c,
                 )}
                 rows={(entries.data?.entries ?? []).slice().reverse()}
                 getRowId={(e) => String(e.id)}
-                defaultPageSize={15}
+                defaultPageSize={25}
                 rowActions={[
                   {
                     tag: "edit",

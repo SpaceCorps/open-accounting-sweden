@@ -21,15 +21,8 @@ import { Download, Pencil, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { api, download, uploadDocument, type Doc } from "../api";
 import { useData } from "../hooks";
-import {
-  EmptyNote,
-  Kpi,
-  PageHeader,
-  Section,
-  TextField,
-  notifyError,
-  notifyOk,
-} from "../kit";
+import { EmptyNote, Kpi, PageHeader, Section, TextField, notifyError, notifyOk } from "../kit";
+import { money } from "../format";
 
 const statusVariant = { unlinked: "warning", draft: "info", booked: "success" } as const;
 
@@ -162,7 +155,8 @@ export function InboxPage() {
       name: "amount",
       header: "Amount",
       align: "Right",
-      accessor: (d) => (d.amount ? `${d.amount} ${d.currency}` : ""),
+      accessor: (d) => (d.amount ? parseFloat(d.amount) : 0),
+      cell: (_, d) => (d.amount ? money(d.amount, d.currency) : "—"),
     },
     { name: "date", header: "Receipt date", accessor: (d) => d.date ?? "" },
     {
@@ -201,7 +195,7 @@ export function InboxPage() {
         title="Inbox"
         description="Receipts and invoices, kept unchanged for seven years and linked to the vouchers they support."
       />
-      <div className="oas-kpis">
+      <div className="oas-kpis oas-kpis-3">
         <Kpi
           label="Unlinked receipts"
           value={count("unlinked")}
@@ -277,7 +271,7 @@ export function InboxPage() {
               if (tag === "edit") setEditing(row);
               else void download(`/documents/${row.id}/file`, row.filename).catch(notifyError);
             }}
-            defaultPageSize={15}
+            defaultPageSize={25}
             caption="Receipts and invoices"
           />
         )}

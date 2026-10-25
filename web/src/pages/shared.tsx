@@ -14,14 +14,15 @@ import { Check, Eye, Undo2, X } from "lucide-react";
 import { useState } from "react";
 import { api, type Draft, type Line, type TimeEntry, type Voucher } from "../api";
 import { ConfirmDialog, notifyError, notifyOk } from "../kit";
+import { amount, hours, money } from "../format";
 
 export const sumDebit = (lines: Line[]) =>
   lines.reduce((s, l) => s + parseFloat(l.debit), 0).toFixed(2);
 
 const lineColumns: DataTableColumn<Line>[] = [
   { name: "account", header: "Account", accessor: (l) => `${l.account} ${l.name}` },
-  { name: "debit", header: "Debit", align: "Right", accessor: (l) => l.debit },
-  { name: "credit", header: "Credit", align: "Right", accessor: (l) => l.credit },
+  { name: "debit", header: "Debit", align: "Right", accessor: (l) => amount(l.debit) },
+  { name: "credit", header: "Credit", align: "Right", accessor: (l) => amount(l.credit) },
 ];
 
 export function VoucherDialog({
@@ -83,7 +84,7 @@ export function DraftsTable({
       header: "Amount",
       align: "Right",
       accessor: (d) => parseFloat(sumDebit(d.lines)),
-      cell: (v) => (v as number).toFixed(2),
+      cell: (v) => money(v as number),
     },
     { name: "created_by", header: "Proposed by" },
   ];
@@ -156,11 +157,14 @@ export function VouchersTable({
   canCorrect,
   onChanged,
   pageSize = 10,
+  compact = false,
 }: {
   vouchers: Voucher[];
   canCorrect: boolean;
   onChanged: () => void;
   pageSize?: number;
+  /** Fewer columns, for a half-width card. */
+  compact?: boolean;
 }) {
   const [viewing, setViewing] = useState<Voucher | null>(null);
   const [correcting, setCorrecting] = useState<Voucher | null>(null);
@@ -180,17 +184,21 @@ export function VouchersTable({
       header: "Amount",
       align: "Right",
       accessor: (v) => parseFloat(sumDebit(v.lines)),
-      cell: (v) => (v as number).toFixed(2),
+      cell: (v) => money(v as number),
     },
-    { name: "approved_by", header: "Approved by" },
-    {
-      name: "corrects",
-      header: "Type",
-      accessor: (v) => (v.corrects ? "Correction" : "Posting"),
-      cell: (v) => (
-        <Badge variant={v === "Correction" ? "warning" : "secondary"}>{v as string}</Badge>
-      ),
-    },
+    ...(compact
+      ? []
+      : ([
+          { name: "approved_by", header: "Approved by" },
+          {
+            name: "corrects",
+            header: "Type",
+            accessor: (v) => (v.corrects ? "Correction" : "Posting"),
+            cell: (v) => (
+              <Badge variant={v === "Correction" ? "warning" : "secondary"}>{v as string}</Badge>
+            ),
+          },
+        ] satisfies DataTableColumn<Voucher>[])),
   ];
   const actions = (v: Voucher): DataTableRowAction<Voucher>[] => [
     { tag: "view", label: "View lines", icon: <Eye aria-hidden="true" />, tooltip: "View lines" },
@@ -262,13 +270,14 @@ export const entryColumns: DataTableColumn<TimeEntry>[] = [
     header: "Hours",
     align: "Right",
     width: "90px",
-    cell: (v) => (v as number).toFixed(2),
+    cell: (v) => hours(v as number),
   },
   {
     name: "amount",
     header: "Amount",
     align: "Right",
-    accessor: (e) => (e.amount ? `${e.amount} ${e.currency}` : ""),
+    accessor: (e) => (e.amount ? parseFloat(e.amount) : 0),
+    cell: (_, e) => (e.amount ? money(e.amount, e.currency) : "—"),
   },
   { name: "project", header: "Project" },
   {
@@ -278,3 +287,13 @@ export const entryColumns: DataTableColumn<TimeEntry>[] = [
   },
   { name: "message", header: "Message" },
 ];
+
+/** Date, project, hours and amount: the entry columns that fit a half-width card. */
+export const compactEntryColumns: DataTableColumn<TimeEntry>[] = [
+  "date",
+  "project",
+  "hours",
+  "amount",
+]
+  .map((name) => entryColumns.find((c) => c.name === name))
+  .filter((c) => c !== undefined);

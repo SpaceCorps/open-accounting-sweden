@@ -18,6 +18,7 @@ import { useState } from "react";
 import { api, type Me } from "../api";
 import { useData } from "../hooks";
 import { Field, Kpi, PageHeader, Section, notifyError, notifyOk } from "../kit";
+import { amount, moneyWhole } from "../format";
 
 interface Box {
   box: string;
@@ -108,7 +109,7 @@ export function VatPage({ me }: { me: Me }) {
       header: "Amount (SEK)",
       align: "Right",
       accessor: (b) => parseFloat(b.amount),
-      cell: (_, b) => b.amount,
+      cell: (_, b) => amount(b.amount),
     },
     { name: "vouchers", header: "Vouchers", accessor: (b) => b.vouchers.join(", ") },
     {
@@ -201,10 +202,10 @@ export function VatPage({ me }: { me: Me }) {
         </div>
       ) : null}
 
-      <div className="oas-kpis">
+      <div className="oas-kpis oas-kpis-4">
         <Kpi
           label="VAT to pay (box 49)"
-          value={`${r?.to_pay ?? "0.00"} kr`}
+          value={moneyWhole(r?.to_pay ?? 0)}
           hint="negative means a refund"
         />
         <Kpi

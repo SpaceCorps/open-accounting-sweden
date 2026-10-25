@@ -30,6 +30,7 @@ import {
   notifyError,
   notifyOk,
 } from "../kit";
+import { dateTime } from "../format";
 
 interface User {
   username: string;
@@ -234,8 +235,12 @@ function TokensSection() {
   }
   const columns: DataTableColumn<Token>[] = [
     { name: "name", header: "Name" },
-    { name: "created_at", header: "Created" },
-    { name: "last_used_at", header: "Last used", accessor: (t) => t.last_used_at ?? "never" },
+    { name: "created_at", header: "Created", accessor: (t) => dateTime(t.created_at) },
+    {
+      name: "last_used_at",
+      header: "Last used",
+      accessor: (t) => (t.last_used_at ? dateTime(t.last_used_at) : "never"),
+    },
   ];
   return (
     <Section
@@ -350,7 +355,7 @@ function UsersSection() {
       header: "Role",
       cell: (v) => <Badge variant={v === "admin" ? "primary" : "secondary"}>{v as string}</Badge>,
     },
-    { name: "created_at", header: "Created" },
+    { name: "created_at", header: "Created", accessor: (u) => dateTime(u.created_at) },
   ];
   return (
     <Section

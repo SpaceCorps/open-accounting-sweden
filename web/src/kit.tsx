@@ -144,8 +144,6 @@ export function EmptyNote({ children }: { children: ReactNode }) {
 }
 
 export { Button };
-export const money = (s: string) => s;
-export const hoursText = (h: number) => `${h.toFixed(2)} h`;
 
 import {
   AlertDialog,

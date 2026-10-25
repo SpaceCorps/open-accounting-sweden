@@ -36,6 +36,7 @@ import {
   notifyError,
   notifyOk,
 } from "../kit";
+import { money } from "../format";
 
 function NewCustomer({
   open,
@@ -198,7 +199,7 @@ function NewInvoice({
                       <SelectContent>
                         {priced.map((p) => (
                           <SelectItem key={p.id} value={p.name}>
-                            {p.name}, {p.rate} {p.currency}
+                            {p.name}, {money(p.rate, p.currency)}
                             {p.rate_type === "hourly" ? " / h" : " fixed"}
                           </SelectItem>
                         ))}
@@ -273,7 +274,8 @@ function ViewInvoice({ invoice, onClose }: { invoice: Invoice | null; onClose: (
               </DialogTitle>
               <DialogDescription>
                 Issued {invoice.issue_date}, due {invoice.due_date}. VAT {invoice.vat_rate}%:{" "}
-                {invoice.totals.vat}. Total {invoice.totals.gross} {invoice.currency}.
+                {money(invoice.totals.vat, invoice.currency)}. Total{" "}
+                {money(invoice.totals.gross, invoice.currency)}.
               </DialogDescription>
             </DialogHeader>
             <DialogBody>
@@ -349,7 +351,7 @@ export function InvoicesPage({ me }: { me: Me }) {
       header: "Amount excl. VAT",
       align: "Right",
       accessor: (i) => parseFloat(i.totals.net),
-      cell: (_, i) => `${i.totals.net} ${i.currency}`,
+      cell: (_, i) => money(i.totals.net, i.currency),
     },
     {
       name: "status",
@@ -405,7 +407,7 @@ export function InvoicesPage({ me }: { me: Me }) {
           </>
         }
       />
-      <div className="oas-kpis">
+      <div className="oas-kpis oas-kpis-3">
         <Kpi label="Drafts" value={list.filter((i) => i.status === "draft").length} />
         <Kpi label="Issued" value={list.filter((i) => i.status === "issued").length} />
         <Kpi label="Customers" value={customers.data?.customers.length ?? 0} />
@@ -437,7 +439,7 @@ export function InvoicesPage({ me }: { me: Me }) {
                 }
                 onRowClick={(row) => setViewing(row)}
                 defaultSort={{ column: "label", direction: "Descending" }}
-                defaultPageSize={12}
+                defaultPageSize={25}
                 caption="Invoices"
               />
             )}

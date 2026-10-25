@@ -42,6 +42,7 @@ import {
   notifyError,
   notifyOk,
 } from "../kit";
+import { count, money } from "../format";
 
 interface Employee {
   id: number;
@@ -296,10 +297,15 @@ function RunDialog({ run, onClose }: { run: Run | null; onClose: () => void }) {
   const cols: DataTableColumn<RunLine>[] = [
     { name: "name", header: "Employee" },
     { name: "identity", header: "Identity" },
-    { name: "gross", header: "Gross", align: "Right" },
-    { name: "tax", header: "Tax", align: "Right" },
-    { name: "net", header: "Net", align: "Right" },
-    { name: "contribution", header: "Employer contributions", align: "Right" },
+    { name: "gross", header: "Gross", align: "Right", accessor: (l) => money(l.gross) },
+    { name: "tax", header: "Tax", align: "Right", accessor: (l) => money(l.tax) },
+    { name: "net", header: "Net", align: "Right", accessor: (l) => money(l.net) },
+    {
+      name: "contribution",
+      header: "Employer contributions",
+      align: "Right",
+      accessor: (l) => money(l.contribution),
+    },
     { name: "rate_note", header: "Rate used", wrapText: true },
   ];
   return (
@@ -310,9 +316,9 @@ function RunDialog({ run, onClose }: { run: Run | null; onClose: () => void }) {
             <DialogHeader>
               <DialogTitle>Pay run {run.period}</DialogTitle>
               <DialogDescription>
-                Paid {run.pay_date}. Gross {run.totals.gross}, tax {run.totals.tax}, contributions{" "}
-                {run.totals.contributions}; {run.totals.to_skattekonto} goes to the tax account. AGI
-                due {run.agi_due ?? "?"} (unverified).
+                Paid {run.pay_date}. Gross {money(run.totals.gross)}, tax {money(run.totals.tax)},
+                contributions {money(run.totals.contributions)}; {money(run.totals.to_skattekonto)}{" "}
+                goes to the tax account. AGI due {run.agi_due ?? "?"} (unverified).
               </DialogDescription>
             </DialogHeader>
             <DialogBody>
@@ -440,21 +446,21 @@ export function PayrollPage({ me }: { me: Me }) {
       header: "Gross",
       align: "Right",
       accessor: (r) => parseFloat(r.totals.gross),
-      cell: (_, r) => r.totals.gross,
+      cell: (_, r) => money(r.totals.gross),
     },
     {
       name: "tax",
       header: "Tax",
       align: "Right",
       accessor: (r) => parseFloat(r.totals.tax),
-      cell: (_, r) => r.totals.tax,
+      cell: (_, r) => money(r.totals.tax),
     },
     {
       name: "contrib",
       header: "Contributions",
       align: "Right",
       accessor: (r) => parseFloat(r.totals.contributions),
-      cell: (_, r) => r.totals.contributions,
+      cell: (_, r) => money(r.totals.contributions),
     },
     { name: "agi", header: "AGI due", accessor: (r) => r.agi_due ?? "" },
     {
@@ -572,15 +578,16 @@ export function PayrollPage({ me }: { me: Me }) {
           </span>
         </div>
       ) : null}
-      <div className="oas-kpis">
+      <div className="oas-kpis oas-kpis-3">
         <Kpi
           label="Employees"
           value={(employees.data?.employees ?? []).filter((e) => e.active).length}
+          hint="active"
         />
         <Kpi
           label="Pay runs"
           value={list.length}
-          hint={`${list.filter((r) => r.status === "draft").length} draft`}
+          hint={count(list.filter((r) => r.status === "draft").length, "draft")}
         />
         <Kpi
           label="Unverified rates"
@@ -623,7 +630,7 @@ export function PayrollPage({ me }: { me: Me }) {
                   else setConfirm({ run: row, what: tag as "approve" | "delete" });
                 }}
                 defaultSort={{ column: "period", direction: "Descending" }}
-                defaultPageSize={12}
+                defaultPageSize={25}
                 caption="Pay runs"
               />
             )}
