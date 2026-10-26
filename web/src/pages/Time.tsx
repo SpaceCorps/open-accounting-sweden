@@ -1,6 +1,7 @@
 import {
   Badge,
   Button,
+  Checkbox,
   DataTable,
   Dialog,
   DialogBody,
@@ -21,7 +22,7 @@ import {
   TabsTrigger,
   type DataTableColumn,
 } from "@spacecorps/components/ui";
-import { Banknote, Download, Pencil, Play, Plus, Square } from "lucide-react";
+import { Banknote, Download, Pencil, Play, Plus, Square, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   ApiError,
@@ -43,6 +44,7 @@ import {
   TextField,
   notifyError,
   notifyOk,
+  ConfirmDialog,
 } from "../kit";
 import { count, hours, money, moneyWhole } from "../format";
 import { entryColumns } from "./shared";
@@ -70,6 +72,8 @@ function LogTimeDialog(props: {
   const [from, setFrom] = useState("09:00");
   const [to, setTo] = useState("10:00");
   const [message, setMessage] = useState("");
+  const [overnight, setOvernight] = useState(false);
+  const [long, setLong] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [suggest, setSuggest] = useState<{ typed: string; options: string[] } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -84,7 +88,7 @@ function LogTimeDialog(props: {
         message: message || null,
         create_project: create,
       };
-      if (props.mode === "log") Object.assign(body, { date, from, to });
+      if (props.mode === "log") Object.assign(body, { date, from, to, overnight, long });
       await api(props.mode === "log" ? "/time" : "/time/start", { method: "POST", body });
       notifyOk(
         props.mode === "log" ? "Time logged" : "Timer started",
@@ -169,6 +173,16 @@ function LogTimeDialog(props: {
                   <TextField label="From" type="time" value={from} onChange={setFrom} />
                   <TextField label="To" type="time" value={to} onChange={setTo} />
                 </div>
+              ) : null}
+              {props.mode === "log" ? (
+                <TimeRangeCheck
+                  from={from}
+                  to={to}
+                  overnight={overnight}
+                  onOvernight={setOvernight}
+                  long={long}
+                  onLong={setLong}
+                />
               ) : null}
               <TextField
                 label="Message"
@@ -437,64 +451,258 @@ function RateDialog({
   );
 }
 
-function EditMessageDialog({
+/** Minutes from midnight for "HH:MM", or null when it is not a time. */
+function minutesOf(time: string): number | null {
+  const m = /^(\d{2}):(\d{2})$/.exec(time);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+
+/** Hours from `from` to `to`, running into the next day when `overnight`; null when unreadable. */
+function spanHours(from: string, to: string, overnight: boolean): number | null {
+  const a = minutesOf(from);
+  const b = minutesOf(to);
+  if (a === null || b === null) return null;
+  const end = b <= a ? (overnight ? b + 24 * 60 : null) : b;
+  return end === null ? null : (end - a) / 60;
+}
+
+/**
+ * The duration of the times being entered, with the two checks the server makes: an end before
+ * the start needs "runs past midnight", and an entry over 12 hours needs a confirmation.
+ */
+function TimeRangeCheck(props: {
+  from: string;
+  to: string;
+  overnight: boolean;
+  onOvernight: (v: boolean) => void;
+  long: boolean;
+  onLong: (v: boolean) => void;
+}) {
+  const a = minutesOf(props.from);
+  const b = minutesOf(props.to);
+  if (a === null || b === null) return null;
+  const endsEarlier = b <= a;
+  const span = spanHours(props.from, props.to, props.overnight);
+  return (
+    <div className="oas-form">
+      {endsEarlier ? (
+        <div className="oas-banner" role="status">
+          <span>
+            Ends at {props.to}, before it starts at {props.from}. Check the times, or mark it as
+            running past midnight.
+          </span>
+          <label className="oas-actions" style={{ cursor: "pointer" }}>
+            <Checkbox
+              checked={props.overnight}
+              onCheckedChange={(c) => props.onOvernight(c === true)}
+            />
+            <span>Runs past midnight</span>
+          </label>
+        </div>
+      ) : null}
+      {span !== null && span > 12 ? (
+        <div className="oas-banner" role="status">
+          <span>This entry is {hours(span)}. Entries over 12 hours need a confirmation.</span>
+          <label className="oas-actions" style={{ cursor: "pointer" }}>
+            <Checkbox checked={props.long} onCheckedChange={(c) => props.onLong(c === true)} />
+            <span>Yes, {hours(span)} is right</span>
+          </label>
+        </div>
+      ) : null}
+      {span !== null && span <= 12 ? <p className="oas-muted">{hours(span)}</p> : null}
+    </div>
+  );
+}
+
+function EditEntryDialog({
   entry,
+  activities,
+  projects,
   onClose,
   onDone,
 }: {
   entry: TimeEntry | null;
+  activities: Activity[];
+  projects: Project[];
   onClose: () => void;
   onDone: () => void;
 }) {
+  const [date, setDate] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [activity, setActivity] = useState("");
+  const [project, setProject] = useState("");
   const [message, setMessage] = useState("");
+  const [overnight, setOvernight] = useState(false);
+  const [long, setLong] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState<number | null>(null);
   if (entry && loaded !== entry.id) {
     setLoaded(entry.id);
+    setDate(entry.date);
+    setFrom(entry.start);
+    setTo(entry.end ?? "");
+    setActivity(entry.activity);
+    setProject(entry.project);
     setMessage(entry.message);
+    setOvernight(entry.end !== null && entry.end <= entry.start);
+    setLong(entry.hours > 12);
   }
+  const close = () => {
+    setLoaded(null);
+    onClose();
+  };
+
   async function save() {
     if (!entry) return;
+    setBusy(true);
     try {
-      await api(`/time/${entry.id}/message`, { method: "POST", body: { message } });
-      notifyOk("Message saved");
-      onClose();
+      const body: Record<string, unknown> = {
+        date,
+        from,
+        activity,
+        project,
+        message,
+        overnight,
+        long,
+      };
+      if (!entry.running) body.to = to;
+      await api(`/time/${entry.id}`, { method: "PATCH", body });
+      localStorage.setItem(LAST_PROJECT_KEY, project);
+      notifyOk("Entry saved");
+      close();
+      onDone();
+    } catch (e) {
+      notifyError(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    if (!entry) return;
+    setConfirming(false);
+    try {
+      await api(`/time/${entry.id}`, { method: "DELETE" });
+      notifyOk(
+        "Entry deleted",
+        `${entry.date} ${entry.start}-${entry.end ?? ""}, ${entry.project}`,
+      );
+      close();
       onDone();
     } catch (e) {
       notifyError(e);
     }
   }
+
+  const span = entry?.running ? null : spanHours(from, to, overnight);
+  const blocked = !entry?.running && (span === null || (span > 12 && !long));
   return (
-    <Dialog open={entry !== null} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Edit message</DialogTitle>
-          <DialogDescription>
-            {entry
-              ? `${entry.date} ${entry.start}-${entry.end ?? "running"}, ${entry.project}, ${entry.activity}. Only the message changes.`
-              : ""}
-          </DialogDescription>
-        </DialogHeader>
-        <form
-          className="oas-dialog-form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void save();
-          }}
-        >
-          <DialogBody>
-            <div className="oas-form">
-              <TextField label="Message" value={message} onChange={setMessage} />
-            </div>
-          </DialogBody>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button type="submit">Save</Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <>
+      <Dialog open={entry !== null && !confirming} onOpenChange={(o) => !o && close()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit entry</DialogTitle>
+            <DialogDescription>
+              Times are in Europe/Stockholm. Changes are kept in the audit log.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="oas-dialog-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!blocked) void save();
+            }}
+          >
+            <DialogBody>
+              <div className="oas-form">
+                <div className="oas-form-row">
+                  <TextField label="Date" type="date" value={date} onChange={setDate} />
+                  <TextField label="From" type="time" value={from} onChange={setFrom} />
+                  {entry?.running ? (
+                    <Field label="To">
+                      <span className="oas-muted">Running</span>
+                    </Field>
+                  ) : (
+                    <TextField label="To" type="time" value={to} onChange={setTo} />
+                  )}
+                </div>
+                {entry?.running ? null : (
+                  <TimeRangeCheck
+                    from={from}
+                    to={to}
+                    overnight={overnight}
+                    onOvernight={setOvernight}
+                    long={long}
+                    onLong={setLong}
+                  />
+                )}
+                <div className="oas-form-row">
+                  <Field label="Activity">
+                    <Select value={activity} onValueChange={setActivity}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {activities.map((a) => (
+                          <SelectItem key={a.name} value={a.name}>
+                            {a.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field label="Project">
+                    <Input
+                      list="oas-edit-projects"
+                      value={project}
+                      onChange={(e) => setProject(e.target.value)}
+                    />
+                    <datalist id="oas-edit-projects">
+                      {projects
+                        .filter((p) => !p.archived)
+                        .map((p) => (
+                          <option key={p.id} value={p.name} />
+                        ))}
+                    </datalist>
+                  </Field>
+                </div>
+                <TextField label="Message" value={message} onChange={setMessage} />
+              </div>
+            </DialogBody>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="destructive"
+                className="oas-footer-start"
+                onClick={() => setConfirming(true)}
+              >
+                <Trash2 /> Delete
+              </Button>
+              <Button type="button" variant="outline" onClick={close}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={busy || blocked || !project.trim()}>
+                Save
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <ConfirmDialog
+        open={confirming}
+        title="Delete this entry?"
+        description={
+          entry
+            ? `${entry.date} ${entry.start}-${entry.end ?? "running"}, ${entry.project}, ${hours(entry.hours)}. It disappears from reports and income; the audit log keeps a copy.`
+            : ""
+        }
+        confirmLabel="Delete entry"
+        onConfirm={() => void remove()}
+        onCancel={() => setConfirming(false)}
+      />
+    </>
   );
 }
 
@@ -784,9 +992,9 @@ export function TimePage({ me }: { me: Me }) {
                 rowActions={[
                   {
                     tag: "edit",
-                    label: "Edit message",
+                    label: "Edit entry",
                     icon: <Pencil aria-hidden="true" />,
-                    tooltip: "Edit message",
+                    tooltip: "Edit entry",
                   },
                 ]}
                 onRowAction={({ row }) => setEditing(row)}
@@ -865,7 +1073,13 @@ export function TimePage({ me }: { me: Me }) {
         onDone={reloadAll}
         canSetRate={me.can_approve}
       />
-      <EditMessageDialog entry={editing} onClose={() => setEditing(null)} onDone={reloadAll} />
+      <EditEntryDialog
+        entry={editing}
+        activities={activities.data?.activities ?? []}
+        projects={projects.data?.projects ?? []}
+        onClose={() => setEditing(null)}
+        onDone={reloadAll}
+      />
       <RateDialog project={pricing} onClose={() => setPricing(null)} onDone={reloadAll} />
       <NewActivityDialog open={newActivity} onOpenChange={setNewActivity} onDone={reloadAll} />
     </>

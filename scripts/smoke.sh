@@ -86,6 +86,15 @@ admin employee add "Young Person" --identity "$YOUNG" >/dev/null
 check "a run needing a not-used rate is refused" 'admin payroll run --period 2026-10 --pay-date 2026-10-25 --line 1=1000:10% 2>&1 | grep -q "marked not used"'
 check "AGI needs an approved run" '! admin payroll agi 1'
 
+# Correcting and deleting time entries (November, so the October invoices above don't include them).
+check "an end before the start is refused (11:25 to 00:25 was meant as 12:25)" '! admin time log --activity meeting --project MOHV --date 2026-11-02 --from 11:25 --to 00:25'
+check "a night shift needs --overnight" 'admin time log --activity meeting --project MOHV --date 2026-11-03 --from 22:00 --to 02:00 --overnight'
+ENTRY=$(admin --json time log --activity meeting --project MOHV --date 2026-11-02 --from 11:25 --to 12:00 | python3 -c "import sys,json; print(json.load(sys.stdin)['entry']['id'])")
+check "an entry can be corrected" 'admin --json time edit $ENTRY --to 12:25 --message Fixed | python3 -c "import sys,json; e=json.load(sys.stdin)[\"entry\"]; sys.exit(0 if e[\"end\"]==\"12:25\" and e[\"hours\"]==1.0 and e[\"message\"]==\"Fixed\" else 1)"'
+check "an agent cannot change an admin's entry" '! agent time edit $ENTRY --message x'
+check "deleting needs --yes without a terminal" '! admin time delete $ENTRY'
+check "an entry can be deleted and leaves an audit row" 'admin time delete $ENTRY --yes && ! admin --json time list --from 2026-11-02 --to 2026-11-02 | grep -q Fixed && admin --json ledger audit | grep -q time.delete'
+
 echo
 if [ $FAIL = 0 ]; then echo "all checks passed"; else echo "some checks FAILED"; fi
 exit $FAIL
