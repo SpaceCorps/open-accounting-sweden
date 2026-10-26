@@ -102,7 +102,8 @@ body {
 }
 .oas-grid-2 {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  /* Two columns where there is room; on a phone each card takes the full width instead of overflowing. */
+  grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
   gap: 1.5rem;
 }
 .oas-section-head {
@@ -120,6 +121,14 @@ body {
 /* A dialog's form must not change the dialog layout; it only adds Enter-to-submit. */
 .oas-dialog-form {
   display: contents;
+}
+/* A checkbox with its label on one line; a long label wraps beside the box, not under it. */
+.oas-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: 0.875rem;
 }
 .oas-form {
   display: flex;
