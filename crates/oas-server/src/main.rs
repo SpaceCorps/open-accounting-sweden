@@ -165,6 +165,17 @@ fn open_db(path: &str) -> Result<Connection, rusqlite::Error> {
     if has == 0 {
         conn.execute_batch("ALTER TABLE time_entry ADD COLUMN created_by TEXT")?;
     }
+    // Deleted entries are kept, marked, and left out everywhere; the audit log says who and when.
+    for (col, decl) in [("deleted_at", "TEXT"), ("deleted_by", "TEXT")] {
+        let has: i64 = conn.query_row(
+            &format!("SELECT COUNT(*) FROM pragma_table_info('time_entry') WHERE name = '{col}'"),
+            [],
+            |r| r.get(0),
+        )?;
+        if has == 0 {
+            conn.execute_batch(&format!("ALTER TABLE time_entry ADD COLUMN {col} {decl}"))?;
+        }
+    }
     conn.execute_batch(ledger::SCHEMA)?;
     conn.execute_batch(auth::SCHEMA)?;
     conn.execute_batch(inbox::SCHEMA)?;
@@ -403,14 +414,16 @@ fn check_overlap(
     conn: &Connection,
     start: DateTime<Utc>,
     end: Option<DateTime<Utc>>,
+    except: Option<i64>,
 ) -> Result<(), ApiError> {
     let end_s = end
         .map(utc_string)
         .unwrap_or_else(|| "9999-12-31T00:00:00Z".into());
     let clash: i64 = conn.query_row(
         "SELECT COUNT(*) FROM time_entry
-         WHERE start_utc < ?2 AND COALESCE(end_utc, '9999-12-31T00:00:00Z') > ?1",
-        params![utc_string(start), end_s],
+         WHERE start_utc < ?2 AND COALESCE(end_utc, '9999-12-31T00:00:00Z') > ?1
+           AND deleted_at IS NULL AND id != ?3",
+        params![utc_string(start), end_s, except.unwrap_or(-1)],
         |r| r.get(0),
     )?;
     if clash > 0 {
@@ -427,6 +440,7 @@ fn load_entries(conn: &Connection) -> Result<Vec<TimeEntry>, ApiError> {
     let mut stmt = conn.prepare(
         "SELECT e.id, e.start_utc, e.end_utc, e.tz, e.activity, e.message, p.name, p.client, p.rate_type, p.rate, p.currency
          FROM time_entry e JOIN project p ON p.id = e.project_id
+         WHERE e.deleted_at IS NULL
          ORDER BY e.start_utc",
     )?;
     let now = Utc::now();
@@ -555,7 +569,7 @@ async fn list_projects(State(st): State<Shared>, Extension(actor): Extension<Act
 fn default_project(conn: &Connection, user: &str) -> Result<Option<String>, ApiError> {
     use rusqlite::OptionalExtension;
     const LAST_ENTRY: &str = "SELECT p.name FROM time_entry t JOIN project p ON p.id = t.project_id
-         WHERE p.archived = 0 AND (?1 IS NULL OR t.created_by = ?1)
+         WHERE p.archived = 0 AND t.deleted_at IS NULL AND (?1 IS NULL OR t.created_by = ?1)
          ORDER BY t.created_at DESC, t.id DESC LIMIT 1";
     let last = |by: Option<&str>| {
         conn.query_row(LAST_ENTRY, params![by], |r| r.get(0))
@@ -743,6 +757,55 @@ struct LogEntry {
     to: String,
     message: Option<String>,
     timezone: Option<String>,
+    /// The entry runs past midnight: an end before the start means the next day.
+    #[serde(default)]
+    overnight: bool,
+    /// Confirms an entry longer than 12 hours.
+    #[serde(default)]
+    long: bool,
+}
+
+/// Hours above which an entry needs an explicit confirmation, so a slip like 11:25 to 00:25
+/// (meant as 12:25) is caught instead of booking 13 hours.
+const LONG_ENTRY_HOURS: i64 = 12;
+
+/// Start and end of an entry from its local date and times. An end before the start is refused
+/// unless the entry is marked overnight, and an entry over 12 hours needs `long`.
+fn entry_span(
+    date: &str,
+    from: &str,
+    to: &str,
+    tz: Tz,
+    overnight: bool,
+    long: bool,
+) -> Result<(DateTime<Utc>, DateTime<Utc>), ApiError> {
+    let start = parse_local(date, from, tz).map_err(ApiError::invalid)?;
+    let mut end = parse_local(date, to, tz).map_err(ApiError::invalid)?;
+    if end <= start {
+        if !overnight {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "end_before_start",
+                format!(
+                    "the entry ends at {to}, before it starts at {from}; check the times, or mark it overnight if it runs past midnight"
+                ),
+            ));
+        }
+        end = end
+            .checked_add_signed(chrono::Duration::days(1))
+            .ok_or_else(|| ApiError::invalid("invalid end time"))?;
+    }
+    if end - start > chrono::Duration::hours(LONG_ENTRY_HOURS) && !long {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "long_entry",
+            format!(
+                "{from} to {to} is {:.1} hours; confirm an entry over {LONG_ENTRY_HOURS} hours explicitly",
+                (end - start).num_minutes() as f64 / 60.0
+            ),
+        ));
+    }
+    Ok((start, end))
 }
 
 async fn log_time(
@@ -751,21 +814,11 @@ async fn log_time(
     Json(b): Json<LogEntry>,
 ) -> ApiResult {
     let tz = tz_of(b.timezone.as_deref())?;
-    let start = parse_local(&b.date, &b.from, tz).map_err(ApiError::invalid)?;
-    let mut end = parse_local(&b.date, &b.to, tz).map_err(ApiError::invalid)?;
-    if end <= start {
-        end = parse_local(&b.date, &b.to, tz)
-            .map_err(ApiError::invalid)?
-            .checked_add_signed(chrono::Duration::days(1))
-            .ok_or_else(|| ApiError::invalid("invalid end time"))?;
-        if end - start > chrono::Duration::hours(16) {
-            return Err(ApiError::invalid("end must be after start"));
-        }
-    }
+    let (start, end) = entry_span(&b.date, &b.from, &b.to, tz, b.overnight, b.long)?;
     let conn = st.conn.lock().unwrap();
     let activity = check_activity(&conn, &b.activity)?;
     let message = resolve_message(&conn, &activity, b.message.as_deref())?;
-    check_overlap(&conn, start, Some(end))?;
+    check_overlap(&conn, start, Some(end), None)?;
     let project_id = resolve_project(&conn, b.project.as_deref(), b.create_project)?;
     conn.execute(
         "INSERT INTO time_entry(start_utc, end_utc, tz, activity, project_id, message, created_at, source, created_by)
@@ -804,7 +857,7 @@ async fn start_timer(
     let tz = tz_of(b.timezone.as_deref())?;
     let conn = st.conn.lock().unwrap();
     let running: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM time_entry WHERE end_utc IS NULL",
+        "SELECT COUNT(*) FROM time_entry WHERE end_utc IS NULL AND deleted_at IS NULL",
         [],
         |r| r.get(0),
     )?;
@@ -818,7 +871,7 @@ async fn start_timer(
     let activity = check_activity(&conn, &b.activity)?;
     let message = resolve_message(&conn, &activity, b.message.as_deref())?;
     let now = Utc::now();
-    check_overlap(&conn, now, None)?;
+    check_overlap(&conn, now, None, None)?;
     let project_id = resolve_project(&conn, b.project.as_deref(), b.create_project)?;
     conn.execute(
         "INSERT INTO time_entry(start_utc, end_utc, tz, activity, project_id, message, created_at, source, created_by)
@@ -833,9 +886,11 @@ async fn start_timer(
 async fn stop_timer(State(st): State<Shared>) -> ApiResult {
     let conn = st.conn.lock().unwrap();
     let id: Option<i64> = conn
-        .query_row("SELECT id FROM time_entry WHERE end_utc IS NULL", [], |r| {
-            r.get(0)
-        })
+        .query_row(
+            "SELECT id FROM time_entry WHERE end_utc IS NULL AND deleted_at IS NULL",
+            [],
+            |r| r.get(0),
+        )
         .ok();
     let Some(id) = id else {
         return Err(ApiError::new(
@@ -867,7 +922,7 @@ async fn edit_entry(
     let message = clean(&b.message, "message", 500)?;
     let conn = st.conn.lock().unwrap();
     let n = conn.execute(
-        "UPDATE time_entry SET message = ?1 WHERE id = ?2",
+        "UPDATE time_entry SET message = ?1 WHERE id = ?2 AND deleted_at IS NULL",
         params![message, id],
     )?;
     if n == 0 {
@@ -880,6 +935,210 @@ async fn edit_entry(
     ledger::audit(&conn, &actor, "time.message", &id.to_string(), &message)?;
     let entry = load_entries(&conn)?.into_iter().find(|e| e.id == id);
     Ok(Json(json!({"entry": entry})))
+}
+
+/// A time entry as stored, for the edit and delete checks.
+struct StoredEntry {
+    start: DateTime<Utc>,
+    end: Option<DateTime<Utc>>,
+    tz: Tz,
+    activity: String,
+    project_id: i64,
+    message: String,
+    created_by: Option<String>,
+}
+
+/// Load an entry that may be changed by this actor: it exists, is not deleted, belongs to the
+/// actor (or the actor is an admin), and is not on an invoice.
+fn changeable_entry(conn: &Connection, actor: &Actor, id: i64) -> Result<StoredEntry, ApiError> {
+    use rusqlite::OptionalExtension;
+    let row = conn
+        .query_row(
+            "SELECT start_utc, end_utc, tz, activity, project_id, message, created_by
+             FROM time_entry WHERE id = ?1 AND deleted_at IS NULL",
+            params![id],
+            |r| {
+                let tz: String = r.get(2)?;
+                Ok(StoredEntry {
+                    start: parse_utc(&r.get::<_, String>(0)?),
+                    end: r.get::<_, Option<String>>(1)?.as_deref().map(parse_utc),
+                    tz: tz.parse().unwrap_or(chrono_tz::Europe::Stockholm),
+                    activity: r.get(3)?,
+                    project_id: r.get(4)?,
+                    message: r.get(5)?,
+                    created_by: r.get(6)?,
+                })
+            },
+        )
+        .optional()?
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such time entry"))?;
+    let owner = row.created_by.as_deref() == Some(actor.name.as_str());
+    if !owner && !matches!(actor.role, Role::Admin) {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "only the person who logged this entry, or an admin, can change it",
+        ));
+    }
+    let invoiced: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM invoiced_entry WHERE entry_id = ?1",
+        params![id],
+        |r| r.get(0),
+    )?;
+    if invoiced > 0 {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "invoiced",
+            "this entry is on an invoice and cannot be changed; delete the draft invoice first",
+        ));
+    }
+    Ok(row)
+}
+
+fn entry_json(conn: &Connection, id: i64) -> Result<Value, ApiError> {
+    Ok(json!(load_entries(conn)?.into_iter().find(|e| e.id == id)))
+}
+
+#[derive(Deserialize)]
+struct EntryPatch {
+    date: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
+    activity: Option<String>,
+    project: Option<String>,
+    message: Option<String>,
+    /// Defaults to whether the entry already runs past midnight.
+    overnight: Option<bool>,
+    /// Defaults to whether the entry is already over 12 hours.
+    long: Option<bool>,
+}
+
+/// Change any part of a time entry. Every change is written to the audit log with the old and new
+/// values.
+async fn patch_entry(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    Json(b): Json<EntryPatch>,
+) -> ApiResult {
+    let conn = st.conn.lock().unwrap();
+    let old = changeable_entry(&conn, &actor, id)?;
+    let before = entry_json(&conn, id)?;
+    let local_start = old.start.with_timezone(&old.tz);
+    let (mut start, mut end) = (old.start, old.end);
+    if b.date.is_some() || b.from.is_some() || b.to.is_some() {
+        let date = b
+            .date
+            .clone()
+            .unwrap_or_else(|| local_start.format("%Y-%m-%d").to_string());
+        let from = b
+            .from
+            .clone()
+            .unwrap_or_else(|| local_start.format("%H:%M").to_string());
+        match (old.end, &b.to) {
+            // A running timer keeps running unless an end is given.
+            (None, None) => {
+                start = parse_local(&date, &from, old.tz).map_err(ApiError::invalid)?;
+                if start > Utc::now() {
+                    return Err(ApiError::invalid(
+                        "a running entry cannot start in the future",
+                    ));
+                }
+            }
+            (old_end, to) => {
+                let to = match (to, old_end) {
+                    (Some(t), _) => t.clone(),
+                    (None, Some(e)) => e.with_timezone(&old.tz).format("%H:%M").to_string(),
+                    (None, None) => unreachable!("handled above"),
+                };
+                let was_overnight = old_end.is_some_and(|e| {
+                    e.with_timezone(&old.tz).date_naive() > local_start.date_naive()
+                });
+                let was_long = old_end
+                    .is_some_and(|e| e - old.start > chrono::Duration::hours(LONG_ENTRY_HOURS));
+                let (s, e) = entry_span(
+                    &date,
+                    &from,
+                    &to,
+                    old.tz,
+                    b.overnight.unwrap_or(was_overnight),
+                    b.long.unwrap_or(was_long),
+                )?;
+                start = s;
+                end = Some(e);
+            }
+        }
+        check_overlap(&conn, start, end, Some(id))?;
+    }
+    let activity = match &b.activity {
+        Some(a) => check_activity(&conn, a)?,
+        None => old.activity.clone(),
+    };
+    let project_id = match &b.project {
+        Some(p) => resolve_project(&conn, Some(p), false)?,
+        None => old.project_id,
+    };
+    let message = match &b.message {
+        Some(m) => clean(m, "message", 500)?,
+        None => old.message.clone(),
+    };
+    // An edit that changes nothing is not saved and leaves no audit row.
+    if (start, end, &activity, project_id, &message)
+        == (
+            old.start,
+            old.end,
+            &old.activity,
+            old.project_id,
+            &old.message,
+        )
+    {
+        return Ok(Json(json!({"entry": before, "changed": false})));
+    }
+    conn.execute(
+        "UPDATE time_entry SET start_utc = ?1, end_utc = ?2, activity = ?3, project_id = ?4, message = ?5
+         WHERE id = ?6",
+        params![
+            utc_string(start),
+            end.map(utc_string),
+            activity,
+            project_id,
+            message,
+            id
+        ],
+    )?;
+    let after = entry_json(&conn, id)?;
+    ledger::audit(
+        &conn,
+        &actor,
+        "time.edit",
+        &id.to_string(),
+        &json!({"old": before, "new": after}).to_string(),
+    )?;
+    Ok(Json(json!({"entry": after, "changed": true})))
+}
+
+/// Delete a time entry. The row is kept and marked deleted, and the audit log records the entry
+/// as it was.
+async fn delete_entry(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> ApiResult {
+    let conn = st.conn.lock().unwrap();
+    changeable_entry(&conn, &actor, id)?;
+    let before = entry_json(&conn, id)?;
+    conn.execute(
+        "UPDATE time_entry SET deleted_at = ?1, deleted_by = ?2 WHERE id = ?3",
+        params![utc_string(Utc::now()), actor.name, id],
+    )?;
+    ledger::audit(
+        &conn,
+        &actor,
+        "time.delete",
+        &id.to_string(),
+        &json!({"old": before}).to_string(),
+    )?;
+    Ok(Json(json!({"deleted": id})))
 }
 
 #[derive(Deserialize, Default)]
@@ -1140,6 +1399,10 @@ fn router(state: Shared, web_dir: Option<&str>) -> Router {
         .route("/income", get(income))
         .route("/time/start", post(start_timer))
         .route("/time/{id}/message", post(edit_entry))
+        .route(
+            "/time/{id}",
+            axum::routing::patch(patch_entry).delete(delete_entry),
+        )
         .route("/time/stop", post(stop_timer))
         .route("/time/report", get(report))
         .route("/time/export.csv", get(export_csv))
@@ -1566,6 +1829,344 @@ mod tests {
         log(AGENT, "Beta", "11:00").await;
         assert_eq!(default(ADMIN).await, "Acme", "the admin's own last entry");
         assert_eq!(default(AGENT).await, "Beta", "the agent's own last entry");
+    }
+
+    async fn log(app: &Router, token: &str, body: Value) -> (u16, Value) {
+        call(app, Some(token), "POST", "/api/time", Some(body)).await
+    }
+
+    fn entry(project: &str, date: &str, from: &str, to: &str) -> Value {
+        json!({"activity": "meeting", "project": project, "date": date, "from": from, "to": to})
+    }
+
+    async fn app_with_project(name: &str) -> Router {
+        let app = app();
+        let (status, _) = call(
+            &app,
+            Some(ADMIN),
+            "POST",
+            "/api/projects",
+            Some(json!({"name": name})),
+        )
+        .await;
+        assert_eq!(status, 200);
+        app
+    }
+
+    async fn audit_actions(app: &Router) -> Vec<(String, String)> {
+        let (_, body) = call(app, Some(ADMIN), "GET", "/api/audit", None).await;
+        let rows = body
+            .as_object()
+            .and_then(|o| o.values().find_map(|v| v.as_array()))
+            .cloned()
+            .unwrap_or_default();
+        rows.iter()
+            .map(|r| {
+                (
+                    r["action"].as_str().unwrap_or("").to_string(),
+                    r["detail"].as_str().unwrap_or("").to_string(),
+                )
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn an_end_before_the_start_is_refused_unless_marked_overnight() {
+        let app = app_with_project("MOHV").await;
+        // The slip that booked 13 hours: 11:25 to 00:25, meant as 12:25.
+        let (status, err) = log(&app, ADMIN, entry("MOHV", "2026-10-26", "11:25", "00:25")).await;
+        assert_eq!(status, 400, "{err}");
+        assert_eq!(err["error"]["code"], "end_before_start");
+        // Marked overnight it is still 13 hours, which needs its own confirmation.
+        let mut overnight = entry("MOHV", "2026-10-26", "11:25", "00:25");
+        overnight["overnight"] = json!(true);
+        let (status, err) = log(&app, ADMIN, overnight.clone()).await;
+        assert_eq!(status, 400, "{err}");
+        assert_eq!(err["error"]["code"], "long_entry");
+        // A real night shift goes through.
+        let mut shift = entry("MOHV", "2026-10-20", "22:00", "02:00");
+        shift["overnight"] = json!(true);
+        let (status, body) = log(&app, ADMIN, shift).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["entry"]["hours"], 4.0);
+    }
+
+    #[tokio::test]
+    async fn a_same_day_entry_over_twelve_hours_needs_confirming() {
+        let app = app_with_project("MOHV").await;
+        let (status, err) = log(&app, ADMIN, entry("MOHV", "2026-10-21", "06:00", "19:00")).await;
+        assert_eq!(status, 400, "{err}");
+        assert_eq!(err["error"]["code"], "long_entry");
+        let mut long = entry("MOHV", "2026-10-21", "06:00", "19:00");
+        long["long"] = json!(true);
+        assert_eq!(log(&app, ADMIN, long).await.0, 200);
+    }
+
+    #[tokio::test]
+    async fn an_entry_can_be_corrected_and_the_change_is_audited() {
+        let app = app_with_project("MOHV").await;
+        call(
+            &app,
+            Some(ADMIN),
+            "POST",
+            "/api/projects",
+            Some(json!({"name": "Intern"})),
+        )
+        .await;
+        let (_, body) = log(&app, ADMIN, entry("MOHV", "2026-10-26", "11:25", "12:00")).await;
+        let id = body["entry"]["id"].as_i64().unwrap();
+        // An end before the start is refused on edit too.
+        let (status, err) = call(
+            &app,
+            Some(ADMIN),
+            "PATCH",
+            &format!("/api/time/{id}"),
+            Some(json!({"to": "00:25"})),
+        )
+        .await;
+        assert_eq!(status, 400, "{err}");
+        let patch =
+            json!({"to": "12:25", "project": "Intern", "activity": "building", "message": "Fixed"});
+        let (status, body) = call(
+            &app,
+            Some(ADMIN),
+            "PATCH",
+            &format!("/api/time/{id}"),
+            Some(patch),
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        let e = &body["entry"];
+        assert_eq!(
+            (e["start"].as_str(), e["end"].as_str()),
+            (Some("11:25"), Some("12:25"))
+        );
+        assert_eq!(
+            (e["project"].as_str(), e["activity"].as_str()),
+            (Some("Intern"), Some("building"))
+        );
+        assert_eq!(e["message"], "Fixed");
+        assert_eq!(e["hours"], 1.0);
+        // Repeating the same edit changes nothing and adds no audit row.
+        let same =
+            json!({"to": "12:25", "project": "Intern", "activity": "building", "message": "Fixed"});
+        let (status, body) = call(
+            &app,
+            Some(ADMIN),
+            "PATCH",
+            &format!("/api/time/{id}"),
+            Some(same),
+        )
+        .await;
+        assert_eq!((status, &body["changed"]), (200, &json!(false)), "{body}");
+        let audit = audit_actions(&app).await;
+        assert_eq!(audit.iter().filter(|(a, _)| a == "time.edit").count(), 1);
+        let edit = audit
+            .iter()
+            .find(|(a, _)| a == "time.edit")
+            .expect("an audit row for the edit");
+        let detail: Value = serde_json::from_str(&edit.1).unwrap();
+        assert_eq!(detail["old"]["end"], "12:00");
+        assert_eq!(detail["new"]["end"], "12:25");
+    }
+
+    #[tokio::test]
+    async fn an_edit_cannot_overlap_another_entry() {
+        let app = app_with_project("MOHV").await;
+        log(&app, ADMIN, entry("MOHV", "2026-10-26", "09:00", "10:00")).await;
+        let (_, body) = log(&app, ADMIN, entry("MOHV", "2026-10-26", "11:00", "12:00")).await;
+        let id = body["entry"]["id"].as_i64().unwrap();
+        let (status, _) = call(
+            &app,
+            Some(ADMIN),
+            "PATCH",
+            &format!("/api/time/{id}"),
+            Some(json!({"from": "09:30"})),
+        )
+        .await;
+        assert_eq!(status, 409);
+        // Moving within its own old slot is fine.
+        let (status, body) = call(
+            &app,
+            Some(ADMIN),
+            "PATCH",
+            &format!("/api/time/{id}"),
+            Some(json!({"from": "11:15"})),
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+    }
+
+    #[tokio::test]
+    async fn only_the_owner_or_an_admin_can_change_an_entry() {
+        let app = app_with_project("MOHV").await;
+        let (_, body) = log(&app, ADMIN, entry("MOHV", "2026-10-26", "09:00", "10:00")).await;
+        let admins = body["entry"]["id"].as_i64().unwrap();
+        let (_, body) = log(&app, AGENT, entry("MOHV", "2026-10-26", "10:00", "11:00")).await;
+        let agents = body["entry"]["id"].as_i64().unwrap();
+        let msg = Some(json!({"message": "x"}));
+        assert_eq!(
+            call(
+                &app,
+                Some(AGENT),
+                "PATCH",
+                &format!("/api/time/{admins}"),
+                msg.clone()
+            )
+            .await
+            .0,
+            403
+        );
+        assert_eq!(
+            call(
+                &app,
+                Some(AGENT),
+                "DELETE",
+                &format!("/api/time/{admins}"),
+                None
+            )
+            .await
+            .0,
+            403
+        );
+        assert_eq!(
+            call(
+                &app,
+                Some(AGENT),
+                "PATCH",
+                &format!("/api/time/{agents}"),
+                msg.clone()
+            )
+            .await
+            .0,
+            200
+        );
+        assert_eq!(
+            call(
+                &app,
+                Some(ADMIN),
+                "PATCH",
+                &format!("/api/time/{agents}"),
+                msg
+            )
+            .await
+            .0,
+            200
+        );
+    }
+
+    #[tokio::test]
+    async fn a_deleted_entry_is_gone_everywhere_but_the_audit_log() {
+        let app = app_with_project("MOHV").await;
+        let (_, body) = log(&app, ADMIN, entry("MOHV", "2026-10-26", "11:25", "12:25")).await;
+        let id = body["entry"]["id"].as_i64().unwrap();
+        let (status, body) = call(
+            &app,
+            Some(ADMIN),
+            "DELETE",
+            &format!("/api/time/{id}"),
+            None,
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        let (_, list) = call(
+            &app,
+            Some(ADMIN),
+            "GET",
+            "/api/time?from=2026-10-01&to=2026-10-31",
+            None,
+        )
+        .await;
+        assert_eq!(list["entries"].as_array().unwrap().len(), 0);
+        let (_, report) = call(
+            &app,
+            Some(ADMIN),
+            "GET",
+            "/api/time/report?from=2026-10-01&to=2026-10-31",
+            None,
+        )
+        .await;
+        assert_eq!(report["total_hours"], 0.0);
+        // The slot is free again, and a second delete finds nothing.
+        assert_eq!(
+            log(&app, ADMIN, entry("MOHV", "2026-10-26", "11:25", "12:25"))
+                .await
+                .0,
+            200
+        );
+        assert_eq!(
+            call(
+                &app,
+                Some(ADMIN),
+                "DELETE",
+                &format!("/api/time/{id}"),
+                None
+            )
+            .await
+            .0,
+            404
+        );
+        let audit = audit_actions(&app).await;
+        let del = audit
+            .iter()
+            .find(|(a, _)| a == "time.delete")
+            .expect("an audit row for the delete");
+        assert!(del.1.contains("\"start\":\"11:25\""), "{}", del.1);
+    }
+
+    #[tokio::test]
+    async fn an_invoiced_entry_cannot_be_changed_or_deleted() {
+        let app = app();
+        let project = json!({"name": "MOHV", "rate_type": "hourly", "rate": "900"});
+        assert_eq!(
+            call(&app, Some(ADMIN), "POST", "/api/projects", Some(project))
+                .await
+                .0,
+            200
+        );
+        let (_, body) = log(&app, ADMIN, entry("MOHV", "2026-10-21", "11:00", "12:00")).await;
+        let id = body["entry"]["id"].as_i64().unwrap();
+        let (_, customer) = call(
+            &app,
+            Some(ADMIN),
+            "POST",
+            "/api/customers",
+            Some(json!({"name": "Kund AB", "address": "Gatan 1"})),
+        )
+        .await;
+        let customer_id = customer["customer"]["id"].as_i64().expect("customer id");
+        let inv = json!({"customer_id": customer_id, "project": "MOHV", "from": "2026-10-01", "to": "2026-10-31"});
+        let (status, body) = call(
+            &app,
+            Some(ADMIN),
+            "POST",
+            "/api/invoices/from-time",
+            Some(inv),
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        let (status, err) = call(
+            &app,
+            Some(ADMIN),
+            "PATCH",
+            &format!("/api/time/{id}"),
+            Some(json!({"to": "12:30"})),
+        )
+        .await;
+        assert_eq!(status, 409, "{err}");
+        assert_eq!(err["error"]["code"], "invoiced");
+        assert_eq!(
+            call(
+                &app,
+                Some(ADMIN),
+                "DELETE",
+                &format!("/api/time/{id}"),
+                None
+            )
+            .await
+            .0,
+            409
+        );
     }
 
     #[test]

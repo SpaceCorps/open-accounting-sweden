@@ -208,3 +208,8 @@ body {
   font-size: 0.8125rem;
   background: var(--muted);
 }
+
+/* A destructive action at the left of a dialog footer, away from Save. */
+.oas-footer-start {
+  margin-right: auto;
+}
