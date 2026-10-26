@@ -591,7 +591,7 @@ function TimeRangeCheck(props: {
             Ends at {props.to}, before it starts at {props.from}. Check the times, or mark it as
             running past midnight.
           </span>
-          <label className="oas-actions" style={{ cursor: "pointer" }}>
+          <label className="oas-check">
             <Checkbox
               checked={props.overnight}
               onCheckedChange={(c) => props.onOvernight(c === true)}
@@ -603,7 +603,7 @@ function TimeRangeCheck(props: {
       {span !== null && span > 12 ? (
         <div className="oas-banner" role="status">
           <span>This entry is {hours(span)}. Entries over 12 hours need a confirmation.</span>
-          <label className="oas-actions" style={{ cursor: "pointer" }}>
+          <label className="oas-check">
             <Checkbox checked={props.long} onCheckedChange={(c) => props.onLong(c === true)} />
             <span>Yes, {hours(span)} is right</span>
           </label>

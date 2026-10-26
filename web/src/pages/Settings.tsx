@@ -1,4 +1,5 @@
 import {
+  Checkbox,
   Badge,
   Button,
   DataTable,
@@ -148,8 +149,8 @@ function CompanySection({ canEdit }: { canEdit: boolean }) {
           onChange={setPayment}
           hint="For example: Bankgiro 123-4567"
         />
-        <label className="oas-actions" style={{ cursor: "pointer" }}>
-          <input type="checkbox" checked={fskatt} onChange={(e) => setFskatt(e.target.checked)} />{" "}
+        <label className="oas-check">
+          <Checkbox checked={fskatt} onCheckedChange={(c) => setFskatt(c === true)} />
           <span>Approved for F-tax (printed on invoices)</span>
         </label>
         <div>
