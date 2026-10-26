@@ -12,6 +12,7 @@ import {
 import { toast } from "@spacecorps/components";
 import { useId, type ReactNode } from "react";
 import { ApiError } from "./api";
+import { normalizeTime } from "./format";
 
 export function PageHeader({
   title,
@@ -127,6 +128,25 @@ export function TextField(props: {
     return (
       <Field label={props.label} hint={props.hint} htmlFor={id}>
         <DatePicker id={id} name={props.name} value={props.value} onChange={props.onChange} />
+      </Field>
+    );
+  }
+  if (props.type === "time") {
+    return (
+      <Field label={props.label} hint={props.hint} htmlFor={id}>
+        <Input
+          id={id}
+          name={props.name}
+          type="text"
+          inputMode="numeric"
+          placeholder="hh:mm"
+          maxLength={5}
+          autoComplete="off"
+          spellCheck={false}
+          value={props.value}
+          onChange={(e) => props.onChange(e.target.value)}
+          onBlur={(e) => props.onChange(normalizeTime(e.target.value))}
+        />
       </Field>
     );
   }

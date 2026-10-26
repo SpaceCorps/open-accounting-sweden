@@ -30,11 +30,14 @@ oas auth login <url> [--username U]   (prompts for the password; or --token T)
 oas auth status | logout
 oas user add USERNAME --role admin|agent | list | passwd
 oas token create NAME [--save] | list | revoke ID
-oas time log --activity A [--project P] --date YYYY-MM-DD --from HH:MM --to HH:MM [--message M] [--create-project]
+oas time log --activity A [--project P] --date YYYY-MM-DD --from HH:MM --to HH:MM [--message M] [--create-project] [--overnight] [--long]
+  (an end before the start is refused unless --overnight; an entry over 12 h needs --long)
 oas time start --activity A [--project P] [--message M] [--create-project]
 oas time stop
 oas income [--month YYYY-MM]   (earned so far and a rough month-end projection, excl. VAT, from tracked time, fixed fees and non-time invoices)
-oas time edit ID --message TEXT   (changes only the message of a logged entry)
+oas time edit ID [--date D] [--from HH:MM] [--to HH:MM] [--activity A] [--project P] [--message M] [--overnight] [--long]
+  (owner or admin; refused for an invoiced entry; every change is audit-logged)
+oas time delete ID [--yes]   (same rules; the entry is kept in the audit log; --yes is required without a terminal)
 oas time list [--from D] [--to D] [--project P] [--activity A]
 oas time report [--week | --month | --from D --to D] [--project P] [--activity A]
 oas time export [--week | --month | --from D --to D] [--project P] [--activity A] [--out FILE]
@@ -681,6 +684,12 @@ enum TimeCmd {
         tz: Option<String>,
         #[arg(long)]
         create_project: bool,
+        /// The entry runs past midnight: an end before the start means the next day
+        #[arg(long)]
+        overnight: bool,
+        /// Confirm an entry longer than 12 hours
+        #[arg(long)]
+        long: bool,
     },
     Start {
         #[arg(long)]
@@ -695,11 +704,34 @@ enum TimeCmd {
         create_project: bool,
     },
     Stop,
-    /// Change the message of a logged entry
+    /// Correct a logged entry: any of its date, times, activity, project or message
     Edit {
         id: i64,
         #[arg(long)]
-        message: String,
+        date: Option<String>,
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long)]
+        activity: Option<String>,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        message: Option<String>,
+        /// The entry runs past midnight
+        #[arg(long)]
+        overnight: bool,
+        /// Confirm an entry longer than 12 hours
+        #[arg(long)]
+        long: bool,
+    },
+    /// Delete a logged entry (kept in the audit log)
+    Delete {
+        id: i64,
+        /// Delete without asking (required when there is no terminal to ask on)
+        #[arg(long)]
+        yes: bool,
     },
     List(Range),
     Report(Range),
@@ -916,6 +948,12 @@ fn request(
     let a = agent();
     let result = match (method, body) {
         ("GET", _) => a.get(&url).header("Authorization", &bearer).call(),
+        ("DELETE", _) => a.delete(&url).header("Authorization", &bearer).call(),
+        ("PATCH", Some(b)) => a
+            .patch(&url)
+            .header("Authorization", &bearer)
+            .content_type("application/json")
+            .send(b.to_string().as_bytes()),
         (_, Some(b)) => a
             .post(&url)
             .header("Authorization", &bearer)
@@ -1272,10 +1310,12 @@ fn run(cli: Cli) -> Result<(), Failure> {
                     message,
                     tz,
                     create_project,
+                    overnight,
+                    long,
                 } => {
                     let body = json!({"activity": activity, "project": project, "date": date,
                         "from": from, "to": to, "message": message, "timezone": tz,
-                        "create_project": create_project});
+                        "create_project": create_project, "overnight": overnight, "long": long});
                     print_value(&post_with_project(&cfg, "/time", body)?, json_out);
                 }
                 TimeCmd::Start {
@@ -1290,10 +1330,63 @@ fn run(cli: Cli) -> Result<(), Failure> {
                     print_value(&post_with_project(&cfg, "/time/start", body)?, json_out);
                 }
                 TimeCmd::Stop => print_value(&call(&cfg, "POST", "/time/stop", None)?, json_out),
-                TimeCmd::Edit { id, message } => {
-                    let body = json!({"message": message});
+                TimeCmd::Edit {
+                    id,
+                    date,
+                    from,
+                    to,
+                    activity,
+                    project,
+                    message,
+                    overnight,
+                    long,
+                } => {
+                    let mut body = json!({});
+                    for (key, value) in [
+                        ("date", date),
+                        ("from", from),
+                        ("to", to),
+                        ("activity", activity),
+                        ("project", project),
+                        ("message", message),
+                    ] {
+                        if let Some(v) = value {
+                            body[key] = json!(v);
+                        }
+                    }
+                    if body.as_object().is_some_and(|o| o.is_empty()) {
+                        return Err(Failure::new(
+                            "invalid_input",
+                            "nothing to change; pass --date, --from, --to, --activity, --project or --message",
+                        ));
+                    }
+                    // Only sent when given, so an entry that already runs overnight stays that way.
+                    if overnight {
+                        body["overnight"] = json!(true);
+                    }
+                    if long {
+                        body["long"] = json!(true);
+                    }
                     print_value(
-                        &call(&cfg, "POST", &format!("/time/{id}/message"), Some(&body))?,
+                        &call(&cfg, "PATCH", &format!("/time/{id}"), Some(&body))?,
+                        json_out,
+                    );
+                }
+                TimeCmd::Delete { id, yes } => {
+                    if !yes {
+                        if !std::io::stdin().is_terminal() {
+                            return Err(Failure::new(
+                                "invalid_input",
+                                "pass --yes to delete without a prompt",
+                            ));
+                        }
+                        let answer = ask(&format!("Delete time entry {id}? [y/N] "));
+                        if !matches!(answer.to_lowercase().as_str(), "y" | "yes") {
+                            return Err(Failure::new("cancelled", "nothing was deleted"));
+                        }
+                    }
+                    print_value(
+                        &call(&cfg, "DELETE", &format!("/time/{id}"), None)?,
                         json_out,
                     );
                 }

@@ -55,3 +55,17 @@ export function dateTime(iso: string | null | undefined): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
+
+/**
+ * A typed time as 24-hour "HH:MM": "930" and "9.30" give "09:30", "9" gives "09:00". Text that is
+ * not a time is returned unchanged, so the field shows what was typed.
+ */
+export function normalizeTime(text: string): string {
+  const t = text.trim();
+  const m = /^(\d{1,2})(?:[:.,\s]?(\d{2}))?$/.exec(t);
+  if (!m) return t;
+  const h = Number(m[1]);
+  const min = m[2] === undefined ? 0 : Number(m[2]);
+  if (h > 23 || min > 59) return t;
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
