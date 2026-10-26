@@ -163,7 +163,7 @@ function CompanySection({ canEdit }: { canEdit: boolean }) {
   );
 }
 
-function PasswordSection() {
+function PasswordSection({ username }: { username: string }) {
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [again, setAgain] = useState("");
@@ -189,6 +189,15 @@ function PasswordSection() {
           void save();
         }}
       >
+        {/* Password managers match a change-password form to the saved login by this username. */}
+        <input
+          type="text"
+          name="username"
+          autoComplete="username"
+          value={username}
+          readOnly
+          hidden
+        />
         <TextField
           label="Current password"
           type="password"
@@ -456,7 +465,7 @@ export function SettingsPage({ me }: { me: Me }) {
       <CompanySection canEdit={me.can_approve} />
       {me.can_approve ? <UsersSection /> : null}
       <TokensSection />
-      <PasswordSection />
+      <PasswordSection username={me.username} />
     </>
   );
 }

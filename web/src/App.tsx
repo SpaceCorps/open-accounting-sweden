@@ -179,7 +179,8 @@ function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
       title={current.label}
       headerActions={<ThemeToggle />}
     >
-      <main className="oas-main">
+      {/* AppShell already renders the <main> landmark. */}
+      <div className="oas-main">
         {current.path === "/" && <Dashboard me={me} />}
         {current.path === "/time" && <TimePage me={me} />}
         {current.path === "/invoices" && <InvoicesPage me={me} />}
@@ -189,7 +190,7 @@ function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
         {current.path === "/vat" && <VatPage me={me} />}
         {current.path === "/payroll" && <PayrollPage me={me} />}
         {current.path === "/settings" && <SettingsPage me={me} />}
-      </main>
+      </div>
     </AppShell>
   );
 }
