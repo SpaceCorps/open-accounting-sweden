@@ -1082,6 +1082,18 @@ async fn patch_entry(
         Some(m) => clean(m, "message", 500)?,
         None => old.message.clone(),
     };
+    // An edit that changes nothing is not saved and leaves no audit row.
+    if (start, end, &activity, project_id, &message)
+        == (
+            old.start,
+            old.end,
+            &old.activity,
+            old.project_id,
+            &old.message,
+        )
+    {
+        return Ok(Json(json!({"entry": before, "changed": false})));
+    }
     conn.execute(
         "UPDATE time_entry SET start_utc = ?1, end_utc = ?2, activity = ?3, project_id = ?4, message = ?5
          WHERE id = ?6",
@@ -1102,7 +1114,7 @@ async fn patch_entry(
         &id.to_string(),
         &json!({"old": before, "new": after}).to_string(),
     )?;
-    Ok(Json(json!({"entry": after})))
+    Ok(Json(json!({"entry": after, "changed": true})))
 }
 
 /// Delete a time entry. The row is kept and marked deleted, and the audit log records the entry
@@ -1935,7 +1947,20 @@ mod tests {
         );
         assert_eq!(e["message"], "Fixed");
         assert_eq!(e["hours"], 1.0);
+        // Repeating the same edit changes nothing and adds no audit row.
+        let same =
+            json!({"to": "12:25", "project": "Intern", "activity": "building", "message": "Fixed"});
+        let (status, body) = call(
+            &app,
+            Some(ADMIN),
+            "PATCH",
+            &format!("/api/time/{id}"),
+            Some(same),
+        )
+        .await;
+        assert_eq!((status, &body["changed"]), (200, &json!(false)), "{body}");
         let audit = audit_actions(&app).await;
+        assert_eq!(audit.iter().filter(|(a, _)| a == "time.edit").count(), 1);
         let edit = audit
             .iter()
             .find(|(a, _)| a == "time.edit")
