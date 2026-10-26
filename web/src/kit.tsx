@@ -7,6 +7,7 @@ import {
   CardTitle,
   DatePicker,
   Input,
+  TimeInput,
   Label,
 } from "@spacecorps/components/ui";
 import { toast } from "@spacecorps/components";
@@ -127,6 +128,21 @@ export function TextField(props: {
     return (
       <Field label={props.label} hint={props.hint} htmlFor={id}>
         <DatePicker id={id} name={props.name} value={props.value} onChange={props.onChange} />
+      </Field>
+    );
+  }
+  if (props.type === "time") {
+    // 24-hour HH:MM in any browser locale; typing 930 gives 09:30, arrows step a quarter hour.
+    return (
+      <Field label={props.label} hint={props.hint} htmlFor={id}>
+        <TimeInput
+          id={id}
+          name={props.name}
+          value={props.value}
+          onChange={props.onChange}
+          step={15}
+          suggestionStep={30}
+        />
       </Field>
     );
   }

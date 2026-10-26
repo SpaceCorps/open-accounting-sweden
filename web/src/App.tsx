@@ -9,6 +9,7 @@ import {
   Toaster,
 } from "@spacecorps/components/ui";
 import { ThemeProvider, useTheme } from "@spacecorps/components/theme";
+import { GamepadNavigationProvider } from "@spacecorps/components/ui";
 import {
   BookOpen,
   Clock,
@@ -233,8 +234,11 @@ export function App() {
 
   return (
     <ThemeProvider defaultTheme="system" storageKey="oas-theme">
-      {checking ? null : me ? <Shell me={me} onSignOut={signOut} /> : <Login onDone={load} />}
-      <Toaster />
+      {/* A connected game controller moves focus (D-pad), activates (A) and goes back (B). */}
+      <GamepadNavigationProvider enabled>
+        {checking ? null : me ? <Shell me={me} onSignOut={signOut} /> : <Login onDone={load} />}
+        <Toaster />
+      </GamepadNavigationProvider>
     </ThemeProvider>
   );
 }
