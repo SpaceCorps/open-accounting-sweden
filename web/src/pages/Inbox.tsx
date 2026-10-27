@@ -285,7 +285,13 @@ export function InboxPage() {
           <EmptyNote>No documents here yet.</EmptyNote>
         ) : (
           <DataTable
-            columns={prioritize(columns, { filename: 2, uploaded_at: 3, source: 4 })}
+            columns={prioritize(columns, {
+              status: 1,
+              date: 2,
+              filename: 3,
+              uploaded_at: 4,
+              source: 5,
+            })}
             rows={docs.data?.documents ?? []}
             getRowId={(d) => String(d.id)}
             rowActions={actions}

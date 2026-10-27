@@ -130,7 +130,7 @@ export function DraftsTable({
   return (
     <>
       <DataTable
-        columns={prioritize(columns, { counterparty: 2, created_by: 3, id: 4 })}
+        columns={prioritize(columns, { event_date: 1, counterparty: 2, id: 3, created_by: 4 })}
         rows={drafts}
         getRowId={(d) => String(d.id)}
         rowActions={actions}
@@ -228,7 +228,7 @@ export function VouchersTable({
   return (
     <>
       <DataTable
-        columns={prioritize(columns, { approved_by: 2, corrects: 3 })}
+        columns={prioritize(columns, { event_date: 1, label: 2, approved_by: 3, corrects: 4 })}
         rows={vouchers}
         getRowId={(v) => String(v.id)}
         rowActions={actions}
@@ -291,6 +291,7 @@ const entryColumnDefs: DataTableColumn<TimeEntry>[] = [
 ];
 
 export const entryColumns = prioritize(entryColumnDefs, {
+  project: 1,
   amount: 2,
   start: 3,
   end: 3,

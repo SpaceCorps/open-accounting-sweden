@@ -528,7 +528,7 @@ export function Ledger({ me }: { me: Me }) {
             description="Most recent 200 actions. The log cannot be edited."
           >
             <DataTable
-              columns={prioritize(auditColumns, { detail: 2, object: 3 })}
+              columns={prioritize(auditColumns, { actor: 1, detail: 2, object: 3 })}
               rows={audit.data?.audit ?? []}
               getRowId={(r) => `${r.at}-${r.action}-${r.object}`}
               defaultPageSize={25}

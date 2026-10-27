@@ -243,7 +243,7 @@ export function VatPage({ me }: { me: Me }) {
             description="Amounts are exact SEK from posted vouchers. Check each box against the SKV 4700 form, then mark it verified."
           >
             <DataTable
-              columns={prioritize(boxColumns, { vouchers: 2, verified: 3 })}
+              columns={prioritize(boxColumns, { label: 1, vouchers: 2, verified: 3 })}
               rows={r?.boxes ?? []}
               getRowId={(b) => b.box}
               rowActions={boxActions}

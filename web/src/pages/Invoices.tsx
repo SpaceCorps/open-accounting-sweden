@@ -366,7 +366,8 @@ export function InvoicesPage({ me }: { me: Me }) {
     { name: "due_date", header: "Due", width: "120px" },
     {
       name: "net",
-      header: "Amount excl. VAT",
+      header: "Net",
+      help: "Amount excluding VAT",
       align: "Right",
       accessor: (i) => parseFloat(i.totals.net),
       cell: (_, i) => money(i.totals.net, i.currency),
@@ -446,7 +447,7 @@ export function InvoicesPage({ me }: { me: Me }) {
               </EmptyNote>
             ) : (
               <DataTable
-                columns={prioritize(columns, { issue_date: 2, due_date: 3 })}
+                columns={prioritize(columns, { status: 1, label: 2, issue_date: 3, due_date: 4 })}
                 rows={list}
                 getRowId={(i) => String(i.id)}
                 rowActions={actions}
@@ -469,7 +470,7 @@ export function InvoicesPage({ me }: { me: Me }) {
               <EmptyNote>No customers yet.</EmptyNote>
             ) : (
               <DataTable
-                columns={prioritize(custColumns, { org_number: 2, address: 3, email: 4 })}
+                columns={prioritize(custColumns, { email: 2, org_number: 3, address: 4 })}
                 rows={customers.data?.customers ?? []}
                 getRowId={(c) => String(c.id)}
                 paginated={false}

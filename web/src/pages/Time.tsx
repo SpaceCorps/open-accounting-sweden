@@ -1167,10 +1167,11 @@ export function TimePage({ me }: { me: Me }) {
             ) : (
               <DataTable
                 columns={prioritize(projectColumns, {
-                  aliases: 2,
-                  client: 3,
-                  rate: 4,
-                  archived: 5,
+                  amount: 1,
+                  rate: 2,
+                  archived: 3,
+                  client: 4,
+                  aliases: 5,
                 })}
                 rows={projects.data?.projects ?? []}
                 getRowId={(p) => String(p.id)}
