@@ -292,6 +292,7 @@ function TokensSection() {
           columns={prioritize(columns, { last_used_at: 2, created_at: 3 })}
           rows={tokens.data?.tokens ?? []}
           getRowId={(t) => String(t.id)}
+          getRowLabel={(t) => t.name}
           paginated={false}
           rowActions={[
             {
@@ -396,6 +397,7 @@ function UsersSection() {
         columns={prioritize(columns, { created_at: 2 })}
         rows={users.data?.users ?? []}
         getRowId={(u) => u.username}
+        getRowLabel={(u) => u.username}
         paginated={false}
       />
       <Dialog open={open} onOpenChange={setOpen}>

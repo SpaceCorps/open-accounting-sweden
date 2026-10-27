@@ -1136,6 +1136,7 @@ export function TimePage({ me }: { me: Me }) {
                 )}
                 rows={(entries.data?.entries ?? []).slice().reverse()}
                 getRowId={(e) => String(e.id)}
+                getRowLabel={(e) => `${e.date} ${e.start} ${e.project}`}
                 defaultPageSize={25}
                 rowActions={[
                   {
@@ -1175,6 +1176,7 @@ export function TimePage({ me }: { me: Me }) {
                 })}
                 rows={projects.data?.projects ?? []}
                 getRowId={(p) => String(p.id)}
+                getRowLabel={(p) => p.name}
                 paginated={false}
                 rowActions={
                   me.can_approve
@@ -1206,6 +1208,7 @@ export function TimePage({ me }: { me: Me }) {
               columns={prioritize(activityColumns, { message: 2 })}
               rows={activities.data?.activities ?? []}
               getRowId={(a) => a.name}
+              getRowLabel={(a) => a.name}
               paginated={false}
             />
           </Section>

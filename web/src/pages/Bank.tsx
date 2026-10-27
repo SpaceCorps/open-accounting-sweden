@@ -490,6 +490,7 @@ export function BankPage({ me }: { me: Me }) {
                 columns={prioritize(txColumns, { date: 1, state: 2, reference: 3 })}
                 rows={byStatus("new")}
                 getRowId={(t) => String(t.id)}
+                getRowLabel={(t) => `${t.date} ${t.counterparty}`}
                 rowActions={toBookActions}
                 onRowAction={({ tag, row }) =>
                   tag === "book" ? setBooking(row) : void ignore(row)
@@ -518,6 +519,7 @@ export function BankPage({ me }: { me: Me }) {
                 columns={prioritize(matchColumns, { score: 1, why: 2, receipt: 3 })}
                 rows={pending}
                 getRowId={(m) => String(m.id)}
+                getRowLabel={(m) => `${m.transaction.date} ${m.transaction.counterparty}`}
                 rowActions={matchActions}
                 onRowAction={({ tag, row }) => void decide(row, tag as "confirm" | "decline")}
                 defaultPageSize={10}
@@ -535,6 +537,7 @@ export function BankPage({ me }: { me: Me }) {
                 columns={prioritize(txColumns, { date: 1, state: 2, reference: 3 })}
                 rows={byStatus("booked")}
                 getRowId={(t) => String(t.id)}
+                getRowLabel={(t) => `${t.date} ${t.counterparty}`}
                 defaultPageSize={25}
               />
             )}
@@ -549,6 +552,7 @@ export function BankPage({ me }: { me: Me }) {
                 columns={prioritize(txColumns, { date: 1, state: 2, reference: 3 })}
                 rows={byStatus("ignored")}
                 getRowId={(t) => String(t.id)}
+                getRowLabel={(t) => `${t.date} ${t.counterparty}`}
                 defaultPageSize={25}
               />
             )}

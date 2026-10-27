@@ -345,13 +345,7 @@ function RunDialog({ run, onClose }: { run: Run | null; onClose: () => void }) {
             </DialogHeader>
             <DialogBody>
               <DataTable
-                columns={prioritize(cols, {
-                  net: 1,
-                  tax: 2,
-                  identity: 3,
-                  contribution: 4,
-                  rate_note: 5,
-                })}
+                columns={cols}
                 rows={run.lines}
                 getRowId={(l) => String(l.employee_id)}
                 paginated={false}
@@ -654,6 +648,7 @@ export function PayrollPage({ me }: { me: Me }) {
                 })}
                 rows={list}
                 getRowId={(r) => String(r.id)}
+                getRowLabel={(r) => `Pay run ${r.period}`}
                 rowActions={runActions}
                 onRowAction={({ tag, row }) => {
                   if (tag === "view") setViewing(row);
@@ -686,6 +681,7 @@ export function PayrollPage({ me }: { me: Me }) {
                 columns={prioritize(empColumns, { active: 1, identity: 2, birth_year: 3 })}
                 rows={employees.data?.employees ?? []}
                 getRowId={(e) => String(e.id)}
+                getRowLabel={(e) => e.name}
                 rowActions={empActions}
                 onRowAction={({ row }) =>
                   void api(`/employees/${row.id}/deactivate`, { method: "POST" })
@@ -710,6 +706,7 @@ export function PayrollPage({ me }: { me: Me }) {
               columns={prioritize(rateColumns, { verified: 1, source: 2 })}
               rows={rates.data?.rates ?? []}
               getRowId={(r) => r.key}
+              getRowLabel={(r) => r.label}
               rowActions={rateActions}
               onRowAction={({ tag, row }) => {
                 if (tag === "edit") {

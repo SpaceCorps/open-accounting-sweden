@@ -496,6 +496,7 @@ export function Ledger({ me }: { me: Me }) {
                   columns={prioritize(trialColumns, { debit: 2, credit: 2 })}
                   rows={trial.data?.accounts ?? []}
                   getRowId={(r) => String(r.account)}
+                  getRowLabel={(r) => `${r.account} ${r.name}`}
                   paginated={false}
                 />
               </>
@@ -518,6 +519,7 @@ export function Ledger({ me }: { me: Me }) {
               columns={prioritize(accountColumns, { kind: 2 })}
               rows={accounts.data?.accounts ?? []}
               getRowId={(a) => String(a.number)}
+              getRowLabel={(a) => `${a.number} ${a.name}`}
               defaultPageSize={25}
             />
           </Section>
@@ -531,6 +533,7 @@ export function Ledger({ me }: { me: Me }) {
               columns={prioritize(auditColumns, { actor: 1, detail: 2, object: 3 })}
               rows={audit.data?.audit ?? []}
               getRowId={(r) => `${r.at}-${r.action}-${r.object}`}
+              getRowLabel={(r) => `${r.action} ${r.object}`}
               defaultPageSize={25}
             />
           </Section>
