@@ -21,8 +21,23 @@ import {
   TabsList,
   TabsTrigger,
   type DataTableColumn,
+  TimeCalendar,
+  calendarColorForKey,
+  getVisibleRange,
+  type CalendarView,
+  type TimeCalendarEvent,
 } from "@spacecorps/components/ui";
-import { Banknote, Download, Pencil, Play, Plus, Square, Trash2 } from "lucide-react";
+import {
+  Banknote,
+  CalendarDays,
+  Download,
+  List,
+  Pencil,
+  Play,
+  Plus,
+  Square,
+  Trash2,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   ApiError,
@@ -50,6 +65,80 @@ import { count, hours, money, moneyWhole } from "../format";
 import { entryColumns } from "./shared";
 
 const LAST_PROJECT_KEY = "oas-last-project";
+const VIEW_KEY = "oas-time-view";
+
+/** "09:30" plus minutes, capped at 23:59 so a late slot never wraps to the next day. */
+function addMinutes(time: string, minutes: number) {
+  const [h, m] = time.split(":").map(Number);
+  const total = Math.min(h * 60 + m + minutes, 23 * 60 + 59);
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+function readView(): "calendar" | "list" {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "list" ? "list" : "calendar";
+  } catch {
+    return "calendar";
+  }
+}
+
+/** Tracked time as a month or week calendar; days and empty slots open Log time, entries open for editing. */
+function EntriesCalendar(props: {
+  filter: URLSearchParams;
+  reloadKey: number;
+  onLog: (start: { date: string; time?: string }) => void;
+  onEdit: (entry: TimeEntry) => void;
+}) {
+  const [date, setDate] = useState(today());
+  const [view, setView] = useState<CalendarView>("month");
+  const range = getVisibleRange(date, view);
+  // A night shift that starts the evening before the first visible day still shows on that day.
+  const qs = new URLSearchParams(props.filter);
+  qs.set("from", dayBefore(range.from));
+  qs.set("to", range.to);
+  const data = useData<{ entries: TimeEntry[] }>(`/time?${qs.toString()}`);
+  const { reload } = data;
+  const { reloadKey } = props;
+  useEffect(() => {
+    if (reloadKey > 0) reload();
+  }, [reloadKey, reload]);
+  const events: TimeCalendarEvent<TimeEntry>[] = (data.data?.entries ?? []).map((e) => ({
+    id: String(e.id),
+    date: e.date,
+    start: e.start,
+    end: e.end ?? undefined,
+    hours: e.running ? undefined : e.hours,
+    title: e.project,
+    description: e.message ? `${e.activity}: ${e.message}` : e.activity,
+    color: calendarColorForKey(e.project),
+    running: e.running,
+    meta: e,
+  }));
+  return (
+    <TimeCalendar
+      events={events}
+      date={date}
+      view={view}
+      onNavigate={(n) => {
+        setDate(n.date);
+        setView(n.view);
+      }}
+      onViewChange={setView}
+      onDayClick={(d) => props.onLog({ date: d })}
+      onSlotClick={(d, time) => props.onLog({ date: d, time })}
+      onEventClick={(ev) => ev.meta && props.onEdit(ev.meta)}
+      formatHours={hours}
+      loading={data.loading}
+      timeZone="Europe/Stockholm"
+    />
+  );
+}
+
+function dayBefore(iso: string) {
+  const d = new Date(`${iso}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
 
 function LogTimeDialog(props: {
   open: boolean;
@@ -59,6 +148,8 @@ function LogTimeDialog(props: {
   projects: Project[];
   /** The server's pick: this user's last project, else the newest one. */
   defaultProject: string | null;
+  /** Where the dialog was opened from the calendar: that day, and the clicked time if any. */
+  start?: { date: string; time?: string } | null;
   onDone: () => void;
 }) {
   const [activity, setActivity] = useState("meeting");
@@ -72,6 +163,15 @@ function LogTimeDialog(props: {
   const [from, setFrom] = useState("09:00");
   const [to, setTo] = useState("10:00");
   const [message, setMessage] = useState("");
+  const { start } = props;
+  useEffect(() => {
+    if (!open || !start) return;
+    setDate(start.date);
+    if (start.time) {
+      setFrom(start.time);
+      setTo(addMinutes(start.time, 60));
+    }
+  }, [open, start]);
   const [overnight, setOvernight] = useState(false);
   const [long, setLong] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -782,6 +882,17 @@ export function TimePage({ me }: { me: Me }) {
   const [project, setProject] = useState("all");
   const [activity, setActivity] = useState("all");
   const [dialog, setDialog] = useState<"log" | "timer" | null>(null);
+  const [logStart, setLogStart] = useState<{ date: string; time?: string } | null>(null);
+  const [view, setViewState] = useState(readView);
+  const setView = (v: "calendar" | "list") => {
+    setViewState(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      /* the choice just is not remembered */
+    }
+  };
+  const [calendarKey, setCalendarKey] = useState(0);
   const [newProject, setNewProject] = useState(false);
   const [pricing, setPricing] = useState<Project | null>(null);
   const [editing, setEditing] = useState<TimeEntry | null>(null);
@@ -791,6 +902,10 @@ export function TimePage({ me }: { me: Me }) {
   if (project !== "all") qs.set("project", project);
   if (activity !== "all") qs.set("activity", activity);
   const q = qs.toString();
+  // The calendar picks its own dates; it keeps the project and activity filters.
+  const filterQs = new URLSearchParams(qs);
+  filterQs.delete("from");
+  filterQs.delete("to");
 
   const entries = useData<{ entries: TimeEntry[] }>(`/time?${q}`);
   const report = useData<Report>(`/time/report?${q}`);
@@ -799,6 +914,7 @@ export function TimePage({ me }: { me: Me }) {
   const running = (entries.data?.entries ?? []).find((e) => e.running);
 
   const reloadAll = () => {
+    setCalendarKey((k) => k + 1);
     entries.reload();
     report.reload();
     projects.reload();
@@ -974,8 +1090,37 @@ export function TimePage({ me }: { me: Me }) {
           <TabsTrigger value="activities">Activity types</TabsTrigger>
         </TabsList>
         <TabsContent value="entries">
-          <Section title="Entries">
-            {(entries.data?.entries ?? []).length === 0 ? (
+          <Section
+            title="Entries"
+            actions={
+              <div className="oas-actions" role="group" aria-label="View">
+                {(["calendar", "list"] as const).map((v) => (
+                  <Button
+                    key={v}
+                    type="button"
+                    size="sm"
+                    variant={view === v ? "default" : "outline"}
+                    aria-pressed={view === v}
+                    onClick={() => setView(v)}
+                  >
+                    {v === "calendar" ? <CalendarDays /> : <List />}
+                    {v === "calendar" ? "Calendar" : "List"}
+                  </Button>
+                ))}
+              </div>
+            }
+          >
+            {view === "calendar" ? (
+              <EntriesCalendar
+                filter={filterQs}
+                reloadKey={calendarKey}
+                onLog={(start) => {
+                  setLogStart(start);
+                  setDialog("log");
+                }}
+                onEdit={setEditing}
+              />
+            ) : (entries.data?.entries ?? []).length === 0 ? (
               <EmptyNote>No entries in this range.</EmptyNote>
             ) : (
               <DataTable
@@ -1061,7 +1206,13 @@ export function TimePage({ me }: { me: Me }) {
       <LogTimeDialog
         open={dialog !== null}
         mode={dialog ?? "log"}
-        onOpenChange={(o) => !o && setDialog(null)}
+        onOpenChange={(o) => {
+          if (!o) {
+            setDialog(null);
+            setLogStart(null);
+          }
+        }}
+        start={logStart}
         activities={activities.data?.activities ?? []}
         projects={projects.data?.projects ?? []}
         defaultProject={projects.data?.default_project ?? null}
