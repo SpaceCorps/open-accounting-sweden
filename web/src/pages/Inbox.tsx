@@ -21,7 +21,16 @@ import { Download, Pencil, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { api, download, uploadDocument, type Doc } from "../api";
 import { useData } from "../hooks";
-import { EmptyNote, Kpi, PageHeader, Section, TextField, notifyError, notifyOk } from "../kit";
+import {
+  EmptyNote,
+  Kpi,
+  PageHeader,
+  Section,
+  TextField,
+  notifyError,
+  notifyOk,
+  prioritize,
+} from "../kit";
 import { money } from "../format";
 
 const statusVariant = { unlinked: "warning", draft: "info", booked: "success" } as const;
@@ -276,7 +285,13 @@ export function InboxPage() {
           <EmptyNote>No documents here yet.</EmptyNote>
         ) : (
           <DataTable
-            columns={columns}
+            columns={prioritize(columns, {
+              status: 1,
+              date: 2,
+              filename: 3,
+              uploaded_at: 4,
+              source: 5,
+            })}
             rows={docs.data?.documents ?? []}
             getRowId={(d) => String(d.id)}
             rowActions={actions}

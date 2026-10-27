@@ -13,7 +13,7 @@ import {
 import { Check, Eye, Undo2, X } from "lucide-react";
 import { useState } from "react";
 import { api, type Draft, type Line, type TimeEntry, type Voucher } from "../api";
-import { ConfirmDialog, notifyError, notifyOk } from "../kit";
+import { ConfirmDialog, notifyError, notifyOk, prioritize } from "../kit";
 import { amount, hours, money } from "../format";
 
 export const sumDebit = (lines: Line[]) =>
@@ -130,7 +130,7 @@ export function DraftsTable({
   return (
     <>
       <DataTable
-        columns={columns}
+        columns={prioritize(columns, { event_date: 1, counterparty: 2, id: 3, created_by: 4 })}
         rows={drafts}
         getRowId={(d) => String(d.id)}
         rowActions={actions}
@@ -228,7 +228,7 @@ export function VouchersTable({
   return (
     <>
       <DataTable
-        columns={columns}
+        columns={prioritize(columns, { event_date: 1, label: 2, approved_by: 3, corrects: 4 })}
         rows={vouchers}
         getRowId={(v) => String(v.id)}
         rowActions={actions}
@@ -255,7 +255,7 @@ export function VouchersTable({
   );
 }
 
-export const entryColumns: DataTableColumn<TimeEntry>[] = [
+const entryColumnDefs: DataTableColumn<TimeEntry>[] = [
   { name: "date", header: "Date", width: "120px" },
   { name: "start", header: "Start", width: "80px" },
   {
@@ -276,6 +276,7 @@ export const entryColumns: DataTableColumn<TimeEntry>[] = [
     name: "amount",
     header: "Amount",
     align: "Right",
+    width: "110px",
     accessor: (e) => (e.amount ? parseFloat(e.amount) : 0),
     cell: (_, e) => (e.amount ? money(e.amount, e.currency) : "—"),
   },
@@ -283,10 +284,20 @@ export const entryColumns: DataTableColumn<TimeEntry>[] = [
   {
     name: "activity",
     header: "Activity",
+    width: "110px",
     cell: (v) => <Badge variant="secondary">{v as string}</Badge>,
   },
   { name: "message", header: "Message" },
 ];
+
+export const entryColumns = prioritize(entryColumnDefs, {
+  project: 1,
+  amount: 2,
+  start: 3,
+  end: 3,
+  message: 4,
+  activity: 5,
+});
 
 /** Date, project, hours and amount: the entry columns that fit a half-width card. */
 export const compactEntryColumns: DataTableColumn<TimeEntry>[] = [

@@ -17,7 +17,7 @@ import { EyeOff, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { api, type Me } from "../api";
 import { useData } from "../hooks";
-import { Field, Kpi, PageHeader, Section, notifyError, notifyOk } from "../kit";
+import { Field, Kpi, PageHeader, Section, notifyError, notifyOk, prioritize } from "../kit";
 import { amount, moneyWhole } from "../format";
 
 interface Box {
@@ -243,7 +243,7 @@ export function VatPage({ me }: { me: Me }) {
             description="Amounts are exact SEK from posted vouchers. Check each box against the SKV 4700 form, then mark it verified."
           >
             <DataTable
-              columns={boxColumns}
+              columns={prioritize(boxColumns, { label: 1, vouchers: 2, verified: 3 })}
               rows={r?.boxes ?? []}
               getRowId={(b) => b.box}
               rowActions={boxActions}
@@ -281,7 +281,7 @@ export function VatPage({ me }: { me: Me }) {
             description="Every check must pass, including the owner's verification of every box."
           >
             <DataTable
-              columns={checkColumns}
+              columns={prioritize(checkColumns, { detail: 2 })}
               rows={r?.checks ?? []}
               getRowId={(c) => c.check}
               paginated={false}

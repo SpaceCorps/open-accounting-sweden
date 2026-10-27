@@ -222,3 +222,11 @@ body {
 .oas-footer-start {
   margin-right: auto;
 }
+
+/* On a phone, long text columns truncate sooner (the library default is 20rem), so the amount
+   beside them stays on screen; the full text is in the row details. */
+@container (max-width: 560px) {
+  .oas-main > * {
+    --ivy-data-table-truncate-width: 9rem;
+  }
+}

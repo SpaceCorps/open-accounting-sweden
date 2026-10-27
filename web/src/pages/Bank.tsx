@@ -45,6 +45,7 @@ import {
   notifyError,
   notifyOk,
   type VatCode,
+  prioritize,
 } from "../kit";
 import { amount, count, money, parseAmountInput } from "../format";
 
@@ -486,7 +487,7 @@ export function BankPage({ me }: { me: Me }) {
               <EmptyNote>Nothing to book. Import a bank statement to begin.</EmptyNote>
             ) : (
               <DataTable
-                columns={txColumns}
+                columns={prioritize(txColumns, { date: 1, state: 2, reference: 3 })}
                 rows={byStatus("new")}
                 getRowId={(t) => String(t.id)}
                 rowActions={toBookActions}
@@ -514,7 +515,7 @@ export function BankPage({ me }: { me: Me }) {
               </EmptyNote>
             ) : (
               <DataTable
-                columns={matchColumns}
+                columns={prioritize(matchColumns, { score: 1, why: 2, receipt: 3 })}
                 rows={pending}
                 getRowId={(m) => String(m.id)}
                 rowActions={matchActions}
@@ -531,7 +532,7 @@ export function BankPage({ me }: { me: Me }) {
               <EmptyNote>No lines booked yet.</EmptyNote>
             ) : (
               <DataTable
-                columns={txColumns}
+                columns={prioritize(txColumns, { date: 1, state: 2, reference: 3 })}
                 rows={byStatus("booked")}
                 getRowId={(t) => String(t.id)}
                 defaultPageSize={25}
@@ -545,7 +546,7 @@ export function BankPage({ me }: { me: Me }) {
               <EmptyNote>Nothing ignored.</EmptyNote>
             ) : (
               <DataTable
-                columns={txColumns}
+                columns={prioritize(txColumns, { date: 1, state: 2, reference: 3 })}
                 rows={byStatus("ignored")}
                 getRowId={(t) => String(t.id)}
                 defaultPageSize={25}

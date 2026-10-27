@@ -30,6 +30,7 @@ import {
   TextField,
   notifyError,
   notifyOk,
+  prioritize,
 } from "../kit";
 import { dateTime } from "../format";
 
@@ -288,7 +289,7 @@ function TokensSection() {
         <EmptyNote>No tokens yet.</EmptyNote>
       ) : (
         <DataTable
-          columns={columns}
+          columns={prioritize(columns, { last_used_at: 2, created_at: 3 })}
           rows={tokens.data?.tokens ?? []}
           getRowId={(t) => String(t.id)}
           paginated={false}
@@ -392,7 +393,7 @@ function UsersSection() {
       }
     >
       <DataTable
-        columns={columns}
+        columns={prioritize(columns, { created_at: 2 })}
         rows={users.data?.users ?? []}
         getRowId={(u) => u.username}
         paginated={false}

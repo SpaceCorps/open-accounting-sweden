@@ -1,7 +1,7 @@
 # Web app. @spacecorps/components is built from the public SpaceCorps/storybook repository at a
 # pinned commit, so no registry token is needed. Bump STORYBOOK_REF to pick up library changes.
 FROM node:24-slim AS web
-ARG STORYBOOK_REF=fd7e3d0ee383d96f91e0a1dd4abb7a1603569bf2
+ARG STORYBOOK_REF=aedc24595167e6c38ed2de84b67ee896f2eb5817
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
  && rm -rf /var/lib/apt/lists/* && corepack enable
 RUN git clone https://github.com/SpaceCorps/storybook.git /storybook \
