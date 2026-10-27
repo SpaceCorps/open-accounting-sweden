@@ -88,7 +88,7 @@ function EditDialog({
                   label="Amount"
                   value={amount}
                   onChange={setAmount}
-                  placeholder="1250.00"
+                  placeholder="1 250,00"
                 />
                 <TextField label="Currency" value={currency} onChange={setCurrency} />
                 <TextField label="Receipt date" type="date" value={date} onChange={setDate} />
@@ -236,7 +236,7 @@ export function InboxPage() {
               onChange={setVendor}
               placeholder="Amazon Web Services"
             />
-            <TextField label="Amount" value={amount} onChange={setAmount} placeholder="1250.00" />
+            <TextField label="Amount" value={amount} onChange={setAmount} placeholder="1 250,00" />
             <TextField label="Currency" value={currency} onChange={setCurrency} />
             <TextField label="Receipt date" type="date" value={date} onChange={setDate} />
           </div>

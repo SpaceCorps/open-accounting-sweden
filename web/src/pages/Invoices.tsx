@@ -357,7 +357,8 @@ export function InvoicesPage({ me }: { me: Me }) {
       header: "No",
       width: "90px",
       accessor: (i) => i.number ?? 1e9,
-      cell: (_, i) => i.label ?? <Badge variant="info">draft</Badge>,
+      // A draft has no number until it is issued; the status column already says draft.
+      cell: (_, i) => i.label ?? <span className="oas-muted">—</span>,
     },
     { name: "customer", header: "Customer", accessor: (i) => i.customer.name },
     { name: "issue_date", header: "Date", width: "120px" },

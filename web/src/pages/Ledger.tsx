@@ -37,7 +37,7 @@ import {
   notifyOk,
   type VatCode,
 } from "../kit";
-import { amount } from "../format";
+import { amount, parseAmountInput } from "../format";
 import { DraftsTable, VouchersTable } from "./shared";
 
 interface DraftLine {
@@ -67,7 +67,7 @@ function NewDraftDialog({
   const [description, setDescription] = useState("");
   const [counterparty, setCounterparty] = useState("");
   const [lines, setLines] = useState<DraftLine[]>(blank());
-  const num = (s: string) => (s.trim() === "" ? 0 : parseFloat(s.replace(",", ".")) || 0);
+  const num = parseAmountInput;
   const debit = lines.reduce((s, l) => s + num(l.debit), 0);
   const credit = lines.reduce((s, l) => s + num(l.credit), 0);
   const balanced = Math.abs(debit - credit) < 0.005 && debit > 0;
@@ -151,13 +151,13 @@ function NewDraftDialog({
                       inputMode="decimal"
                       value={l.debit}
                       onChange={(e) => set(i, { debit: e.target.value, credit: "" })}
-                      placeholder="0.00"
+                      placeholder="0,00"
                     />
                     <Input
                       inputMode="decimal"
                       value={l.credit}
                       onChange={(e) => set(i, { credit: e.target.value, debit: "" })}
-                      placeholder="0.00"
+                      placeholder="0,00"
                     />
                     <VatCodeSelect
                       value={l.vat}

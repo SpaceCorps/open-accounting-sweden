@@ -42,7 +42,7 @@ import {
   notifyError,
   notifyOk,
 } from "../kit";
-import { count, money } from "../format";
+import { count, money, parseAmountInput } from "../format";
 
 interface Employee {
   id: number;
@@ -206,7 +206,7 @@ function NewRun({
             gross: r.gross,
             ...(r.tax.trim() !== ""
               ? { tax: r.tax }
-              : { tax_percent: parseFloat(r.percent || "0") }),
+              : { tax_percent: parseAmountInput(r.percent) }),
           })),
         },
       });
@@ -273,13 +273,13 @@ function NewRun({
                           inputMode="decimal"
                           value={r.gross}
                           onChange={(ev) => set(e, { gross: ev.target.value })}
-                          placeholder="0.00"
+                          placeholder="0,00"
                         />
                         <Input
                           inputMode="decimal"
                           value={r.tax}
                           onChange={(ev) => set(e, { tax: ev.target.value })}
-                          placeholder="0.00"
+                          placeholder="0,00"
                         />
                         <Input
                           inputMode="decimal"
