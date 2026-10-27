@@ -41,6 +41,7 @@ import {
   TextField,
   notifyError,
   notifyOk,
+  prioritize,
 } from "../kit";
 import { count, money } from "../format";
 
@@ -344,7 +345,7 @@ function RunDialog({ run, onClose }: { run: Run | null; onClose: () => void }) {
             </DialogHeader>
             <DialogBody>
               <DataTable
-                columns={cols}
+                columns={prioritize(cols, { identity: 2, rate_note: 3, contribution: 4 })}
                 rows={run.lines}
                 getRowId={(l) => String(l.employee_id)}
                 paginated={false}
@@ -638,7 +639,7 @@ export function PayrollPage({ me }: { me: Me }) {
               <EmptyNote>No pay runs yet.</EmptyNote>
             ) : (
               <DataTable
-                columns={runColumns}
+                columns={prioritize(runColumns, { pay_date: 2, agi: 3, contrib: 4 })}
                 rows={list}
                 getRowId={(r) => String(r.id)}
                 rowActions={runActions}
@@ -670,7 +671,7 @@ export function PayrollPage({ me }: { me: Me }) {
               <EmptyNote>No employees yet. Add yourself and anyone you pay.</EmptyNote>
             ) : (
               <DataTable
-                columns={empColumns}
+                columns={prioritize(empColumns, { identity: 2, birth_year: 3 })}
                 rows={employees.data?.employees ?? []}
                 getRowId={(e) => String(e.id)}
                 rowActions={empActions}
@@ -694,7 +695,7 @@ export function PayrollPage({ me }: { me: Me }) {
             description="Check each against Skatteverket's pages, then mark it verified. Changing a value clears its verification."
           >
             <DataTable
-              columns={rateColumns}
+              columns={prioritize(rateColumns, { source: 2 })}
               rows={rates.data?.rates ?? []}
               getRowId={(r) => r.key}
               rowActions={rateActions}

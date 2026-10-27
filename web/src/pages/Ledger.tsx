@@ -36,6 +36,7 @@ import {
   notifyError,
   notifyOk,
   type VatCode,
+  prioritize,
 } from "../kit";
 import { amount } from "../format";
 import { DraftsTable, VouchersTable } from "./shared";
@@ -492,7 +493,7 @@ export function Ledger({ me }: { me: Me }) {
                   </Badge>
                 </p>
                 <DataTable
-                  columns={trialColumns}
+                  columns={prioritize(trialColumns, { debit: 2, credit: 2 })}
                   rows={trial.data?.accounts ?? []}
                   getRowId={(r) => String(r.account)}
                   paginated={false}
@@ -514,7 +515,7 @@ export function Ledger({ me }: { me: Me }) {
             }
           >
             <DataTable
-              columns={accountColumns}
+              columns={prioritize(accountColumns, { kind: 2 })}
               rows={accounts.data?.accounts ?? []}
               getRowId={(a) => String(a.number)}
               defaultPageSize={25}
@@ -527,7 +528,7 @@ export function Ledger({ me }: { me: Me }) {
             description="Most recent 200 actions. The log cannot be edited."
           >
             <DataTable
-              columns={auditColumns}
+              columns={prioritize(auditColumns, { detail: 2, object: 3 })}
               rows={audit.data?.audit ?? []}
               getRowId={(r) => `${r.at}-${r.action}-${r.object}`}
               defaultPageSize={25}

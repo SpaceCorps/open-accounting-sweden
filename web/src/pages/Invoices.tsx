@@ -35,6 +35,7 @@ import {
   TextField,
   notifyError,
   notifyOk,
+  prioritize,
 } from "../kit";
 import { money } from "../format";
 
@@ -444,7 +445,7 @@ export function InvoicesPage({ me }: { me: Me }) {
               </EmptyNote>
             ) : (
               <DataTable
-                columns={columns}
+                columns={prioritize(columns, { issue_date: 2, due_date: 3 })}
                 rows={list}
                 getRowId={(i) => String(i.id)}
                 rowActions={actions}
@@ -467,7 +468,7 @@ export function InvoicesPage({ me }: { me: Me }) {
               <EmptyNote>No customers yet.</EmptyNote>
             ) : (
               <DataTable
-                columns={custColumns}
+                columns={prioritize(custColumns, { org_number: 2, address: 3, email: 4 })}
                 rows={customers.data?.customers ?? []}
                 getRowId={(c) => String(c.id)}
                 paginated={false}

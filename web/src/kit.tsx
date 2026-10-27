@@ -11,6 +11,7 @@ import {
   Label,
 } from "@spacecorps/components/ui";
 import { toast } from "@spacecorps/components";
+import type { DataTableColumn } from "@spacecorps/components/ui";
 import { useId, type ReactNode } from "react";
 import { ApiError } from "./api";
 
@@ -256,4 +257,15 @@ export function VatCodeSelect(props: {
       </SelectContent>
     </Select>
   );
+}
+
+/**
+ * Give columns a priority for narrow screens: lower is more important, and a column without one
+ * never hides. When the table is too narrow, the highest numbers fold into the row details first.
+ */
+export function prioritize<T>(
+  columns: DataTableColumn<T>[],
+  priorities: Record<string, number>,
+): DataTableColumn<T>[] {
+  return columns.map((c) => (c.name in priorities ? { ...c, priority: priorities[c.name] } : c));
 }

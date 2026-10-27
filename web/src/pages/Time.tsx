@@ -60,6 +60,7 @@ import {
   notifyError,
   notifyOk,
   ConfirmDialog,
+  prioritize,
 } from "../kit";
 import { count, hours, money, moneyWhole } from "../format";
 import { entryColumns } from "./shared";
@@ -1163,7 +1164,12 @@ export function TimePage({ me }: { me: Me }) {
               </EmptyNote>
             ) : (
               <DataTable
-                columns={projectColumns}
+                columns={prioritize(projectColumns, {
+                  aliases: 2,
+                  client: 3,
+                  rate: 4,
+                  archived: 5,
+                })}
                 rows={projects.data?.projects ?? []}
                 getRowId={(p) => String(p.id)}
                 paginated={false}
@@ -1194,7 +1200,7 @@ export function TimePage({ me }: { me: Me }) {
             }
           >
             <DataTable
-              columns={activityColumns}
+              columns={prioritize(activityColumns, { message: 2 })}
               rows={activities.data?.activities ?? []}
               getRowId={(a) => a.name}
               paginated={false}
