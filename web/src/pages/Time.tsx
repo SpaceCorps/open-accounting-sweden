@@ -128,6 +128,8 @@ function EntriesCalendar(props: {
       onSlotClick={(d, time) => props.onLog({ date: d, time })}
       onEventClick={(ev) => ev.meta && props.onEdit(ev.meta)}
       formatHours={hours}
+      // The page already scrolls; a second scroll area inside the week view is one too many.
+      maxBodyHeight="none"
       loading={data.loading}
       timeZone="Europe/Stockholm"
     />
