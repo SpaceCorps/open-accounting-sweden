@@ -47,7 +47,7 @@ import {
   type VatCode,
   prioritize,
 } from "../kit";
-import { amount, count, money } from "../format";
+import { amount, count, money, parseAmountInput } from "../format";
 
 interface Row {
   account: string;
@@ -55,7 +55,7 @@ interface Row {
   credit: string;
   vat: string;
 }
-const num = (s: string) => (s.trim() === "" ? 0 : parseFloat(s.replace(",", ".")) || 0);
+const num = parseAmountInput;
 
 function BookDialog(props: {
   tx: BankTx | null;
@@ -174,13 +174,13 @@ function BookDialog(props: {
                     inputMode="decimal"
                     value={r.debit}
                     onChange={(e) => set(i, { debit: e.target.value, credit: "" })}
-                    placeholder="0.00"
+                    placeholder="0,00"
                   />
                   <Input
                     inputMode="decimal"
                     value={r.credit}
                     onChange={(e) => set(i, { credit: e.target.value, debit: "" })}
-                    placeholder="0.00"
+                    placeholder="0,00"
                   />
                   <VatCodeSelect
                     value={r.vat}
@@ -465,13 +465,7 @@ export function BankPage({ me }: { me: Me }) {
         <Kpi
           label="To book"
           value={byStatus("new").length}
-          badge={
-            byStatus("new").length ? (
-              <Badge variant="warning">open</Badge>
-            ) : (
-              <Badge variant="success">done</Badge>
-            )
-          }
+          hint={byStatus("new").length ? "without a voucher yet" : "all booked"}
         />
         <Kpi label="Receipt suggestions" value={pending.length} />
         <Kpi label="Booked" value={byStatus("booked").length} />

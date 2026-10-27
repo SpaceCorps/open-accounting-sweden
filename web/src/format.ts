@@ -69,3 +69,13 @@ export function normalizeTime(text: string): string {
   if (h > 23 || min > 59) return t;
   return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }
+
+/**
+ * A typed amount as a number, the way the server reads it: spaces (also non-breaking) are
+ * thousands separators and a comma is the decimal mark, so "1 250,00" is 1250. Empty or
+ * unreadable text is 0.
+ */
+export function parseAmountInput(text: string): number {
+  const n = parseFloat(text.replace(/[\s_]/g, "").replace(",", "."));
+  return Number.isFinite(n) ? n : 0;
+}
