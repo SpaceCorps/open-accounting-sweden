@@ -246,6 +246,7 @@ export function VatPage({ me }: { me: Me }) {
               columns={prioritize(boxColumns, { label: 1, vouchers: 2, verified: 3 })}
               rows={r?.boxes ?? []}
               getRowId={(b) => b.box}
+              getRowLabel={(b) => `Box ${b.box} ${b.label}`}
               rowActions={boxActions}
               onRowAction={({ tag, row }) => {
                 if (tag === "unused" || tag === "used")
@@ -284,6 +285,7 @@ export function VatPage({ me }: { me: Me }) {
               columns={prioritize(checkColumns, { detail: 2 })}
               rows={r?.checks ?? []}
               getRowId={(c) => c.check}
+              getRowLabel={(c) => c.check}
               paginated={false}
               caption="Readiness checks"
             />

@@ -133,6 +133,7 @@ export function DraftsTable({
         columns={prioritize(columns, { event_date: 1, counterparty: 2, id: 3, created_by: 4 })}
         rows={drafts}
         getRowId={(d) => String(d.id)}
+        getRowLabel={(d) => `Draft ${d.id} ${d.description}`}
         rowActions={actions}
         onRowAction={({ tag, row }) => (tag === "approve" ? void approve(row) : setRejecting(row))}
         defaultPageSize={10}
@@ -231,6 +232,7 @@ export function VouchersTable({
         columns={prioritize(columns, { event_date: 1, label: 2, approved_by: 3, corrects: 4 })}
         rows={vouchers}
         getRowId={(v) => String(v.id)}
+        getRowLabel={(v) => `${v.label} ${v.description}`}
         rowActions={actions}
         onRowAction={({ tag, row }) => (tag === "view" ? setViewing(row) : setCorrecting(row))}
         onRowClick={(row) => setViewing(row)}
@@ -307,4 +309,10 @@ export const compactEntryColumns: DataTableColumn<TimeEntry>[] = [
   "amount",
 ]
   .map((name) => entryColumns.find((c) => c.name === name))
-  .filter((c) => c !== undefined);
+  .filter((c) => c !== undefined)
+  // These four fit a half-width card; only on a phone do project and amount move into the row details.
+  .map((c) => ({
+    ...c,
+    priority: undefined,
+    hideBelow: c.name === "amount" || c.name === "project" ? 340 : undefined,
+  }));

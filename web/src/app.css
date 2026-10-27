@@ -147,7 +147,7 @@ body {
   align-items: flex-end;
 }
 .oas-error {
-  color: var(--destructive);
+  color: var(--red);
   font-size: 0.875rem;
   margin: 0;
 }

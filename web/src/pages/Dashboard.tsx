@@ -147,6 +147,7 @@ export function Dashboard({ me }: { me: Me }) {
               columns={compactEntryColumns}
               rows={recent}
               getRowId={(e) => String(e.id)}
+              getRowLabel={(e) => `${e.date} ${e.project}`}
               paginated={false}
             />
           )}

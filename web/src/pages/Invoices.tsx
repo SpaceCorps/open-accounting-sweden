@@ -450,6 +450,7 @@ export function InvoicesPage({ me }: { me: Me }) {
                 columns={prioritize(columns, { status: 1, label: 2, issue_date: 3, due_date: 4 })}
                 rows={list}
                 getRowId={(i) => String(i.id)}
+                getRowLabel={(i) => `${i.label ?? "Draft"} ${i.customer.name}`}
                 rowActions={actions}
                 onRowAction={({ tag, row }) =>
                   tag === "view"
@@ -473,6 +474,7 @@ export function InvoicesPage({ me }: { me: Me }) {
                 columns={prioritize(custColumns, { email: 2, org_number: 3, address: 4 })}
                 rows={customers.data?.customers ?? []}
                 getRowId={(c) => String(c.id)}
+                getRowLabel={(c) => c.name}
                 paginated={false}
               />
             )}

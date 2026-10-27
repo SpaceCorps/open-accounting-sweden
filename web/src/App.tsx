@@ -169,9 +169,11 @@ function Shell({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
           )}
           <Button
             variant="ghost"
-            className={collapsed ? "w-full justify-center px-0" : "w-full justify-start"}
+            size={collapsed ? "icon" : undefined}
+            className={collapsed ? "mx-auto" : "w-full justify-start"}
             onClick={onSignOut}
             aria-label="Sign out"
+            title={collapsed ? "Sign out" : undefined}
           >
             <LogOut /> {collapsed ? null : "Sign out"}
           </Button>
