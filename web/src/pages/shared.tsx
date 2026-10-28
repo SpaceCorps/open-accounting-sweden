@@ -77,7 +77,7 @@ export function DraftsTable({
   const columns: DataTableColumn<Draft>[] = [
     { name: "id", header: "ID", width: "70px" },
     { name: "event_date", header: "Date", width: "120px" },
-    { name: "description", header: "Description" },
+    { name: "description", header: "Text", help: "Voucher text" },
     { name: "counterparty", header: "Counterparty" },
     {
       name: "amount",
@@ -134,6 +134,7 @@ export function DraftsTable({
         rows={drafts}
         getRowId={(d) => String(d.id)}
         getRowLabel={(d) => `Draft ${d.id} ${d.description}`}
+        collapseRowActionsBelow={500}
         rowActions={actions}
         onRowAction={({ tag, row }) => (tag === "approve" ? void approve(row) : setRejecting(row))}
         defaultPageSize={10}
@@ -179,7 +180,7 @@ export function VouchersTable({
       cell: (_, v) => v.label,
     },
     { name: "event_date", header: "Date", width: "120px" },
-    { name: "description", header: "Description" },
+    { name: "description", header: "Text", help: "Voucher text" },
     {
       name: "amount",
       header: "Amount",
@@ -233,6 +234,7 @@ export function VouchersTable({
         rows={vouchers}
         getRowId={(v) => String(v.id)}
         getRowLabel={(v) => `${v.label} ${v.description}`}
+        collapseRowActionsBelow={500}
         rowActions={actions}
         onRowAction={({ tag, row }) => (tag === "view" ? setViewing(row) : setCorrecting(row))}
         onRowClick={(row) => setViewing(row)}

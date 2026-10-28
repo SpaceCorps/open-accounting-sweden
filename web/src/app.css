@@ -230,3 +230,10 @@ body {
     --ivy-data-table-truncate-width: 9rem;
   }
 }
+/* A small phone has room for the details button, one short text column, the amount and the
+   actions menu, so text truncates sooner still. */
+@container (max-width: 420px) {
+  .oas-main > * {
+    --ivy-data-table-truncate-width: 5rem;
+  }
+}

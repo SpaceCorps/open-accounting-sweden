@@ -294,6 +294,7 @@ function TokensSection() {
           getRowId={(t) => String(t.id)}
           getRowLabel={(t) => t.name}
           paginated={false}
+          collapseRowActionsBelow={500}
           rowActions={[
             {
               tag: "revoke",
