@@ -269,3 +269,14 @@ export function prioritize<T>(
 ): DataTableColumn<T>[] {
   return columns.map((c) => (c.name in priorities ? { ...c, priority: priorities[c.name] } : c));
 }
+
+/**
+ * A column header that is a short word on a phone and the full word elsewhere. A cut-off header
+ * ("Coun…") has no tooltip on a touch screen, so phones get a word that fits. Read when the
+ * columns are built, so it follows the width the page was rendered at.
+ */
+export function phoneLabel(full: string, short: string): string {
+  return typeof window !== "undefined" && window.matchMedia("(max-width: 639px)").matches
+    ? short
+    : full;
+}

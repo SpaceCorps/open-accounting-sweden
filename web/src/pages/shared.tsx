@@ -13,7 +13,7 @@ import {
 import { Check, Eye, Undo2, X } from "lucide-react";
 import { useState } from "react";
 import { api, type Draft, type Line, type TimeEntry, type Voucher } from "../api";
-import { ConfirmDialog, notifyError, notifyOk, prioritize } from "../kit";
+import { ConfirmDialog, notifyError, notifyOk, prioritize, phoneLabel } from "../kit";
 import { amount, hours, money } from "../format";
 
 export const sumDebit = (lines: Line[]) =>
@@ -77,8 +77,8 @@ export function DraftsTable({
   const columns: DataTableColumn<Draft>[] = [
     { name: "id", header: "ID", width: "70px" },
     { name: "event_date", header: "Date", width: "120px" },
-    { name: "description", header: "Description" },
-    { name: "counterparty", header: "Counterparty" },
+    { name: "description", header: phoneLabel("Description", "Text") },
+    { name: "counterparty", header: phoneLabel("Counterparty", "Name") },
     {
       name: "amount",
       header: "Amount",
@@ -180,7 +180,7 @@ export function VouchersTable({
       cell: (_, v) => v.label,
     },
     { name: "event_date", header: "Date", width: "120px" },
-    { name: "description", header: "Description" },
+    { name: "description", header: phoneLabel("Description", "Text") },
     {
       name: "amount",
       header: "Amount",

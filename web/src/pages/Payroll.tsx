@@ -42,6 +42,7 @@ import {
   notifyError,
   notifyOk,
   prioritize,
+  phoneLabel,
 } from "../kit";
 import { count, money, parseAmountInput } from "../format";
 
@@ -530,7 +531,7 @@ export function PayrollPage({ me }: { me: Me }) {
   ];
 
   const rateColumns: DataTableColumn<Rate>[] = [
-    { name: "label", header: "Rate or limit" },
+    { name: "label", header: phoneLabel("Rate or limit", "Rate") },
     { name: "value", header: "Value", width: "110px" },
     {
       name: "verified",

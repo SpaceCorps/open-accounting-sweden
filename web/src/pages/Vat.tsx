@@ -17,7 +17,16 @@ import { EyeOff, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { api, type Me } from "../api";
 import { useData } from "../hooks";
-import { Field, Kpi, PageHeader, Section, notifyError, notifyOk, prioritize } from "../kit";
+import {
+  Field,
+  Kpi,
+  PageHeader,
+  Section,
+  notifyError,
+  notifyOk,
+  prioritize,
+  phoneLabel,
+} from "../kit";
 import { amount, moneyWhole } from "../format";
 
 interface Box {
@@ -300,12 +309,12 @@ export function VatPage({ me }: { me: Me }) {
             <DataTable
               columns={
                 [
-                  { name: "account", header: "Account", width: "90px" },
+                  { name: "account", header: phoneLabel("Account", "Acct"), width: "90px" },
                   { name: "name", header: "Name" },
                   { name: "box", header: "Box", width: "80px" },
                   {
                     name: "side",
-                    header: "Counts",
+                    header: phoneLabel("Counts", "Sign"),
                     cell: (v) => (v === "credit" ? "credit minus debit" : "debit minus credit"),
                   },
                 ] as DataTableColumn<Config["accounts"][number]>[]
