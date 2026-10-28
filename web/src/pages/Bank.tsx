@@ -333,7 +333,7 @@ export function BankPage({ me }: { me: Me }) {
   const txMoney = (t: BankTx) => money(t.amount, t.currency);
   const txColumns: DataTableColumn<BankTx>[] = [
     { name: "date", header: "Date", width: "120px" },
-    { name: "counterparty", header: "Name", help: "Counterparty" },
+    { name: "counterparty", header: "Counterparty" },
     { name: "reference", header: "Reference" },
     {
       name: "amount",
