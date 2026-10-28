@@ -46,6 +46,7 @@ import {
   notifyOk,
   type VatCode,
   prioritize,
+  phoneLabel,
 } from "../kit";
 import { amount, count, money, parseAmountInput } from "../format";
 
@@ -333,7 +334,7 @@ export function BankPage({ me }: { me: Me }) {
   const txMoney = (t: BankTx) => money(t.amount, t.currency);
   const txColumns: DataTableColumn<BankTx>[] = [
     { name: "date", header: "Date", width: "120px" },
-    { name: "counterparty", header: "Counterparty" },
+    { name: "counterparty", header: phoneLabel("Counterparty", "Name") },
     { name: "reference", header: "Reference" },
     {
       name: "amount",

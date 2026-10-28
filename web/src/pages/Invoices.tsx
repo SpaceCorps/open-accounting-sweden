@@ -36,6 +36,7 @@ import {
   notifyError,
   notifyOk,
   prioritize,
+  phoneLabel,
 } from "../kit";
 import { amount, money } from "../format";
 
@@ -361,7 +362,11 @@ export function InvoicesPage({ me }: { me: Me }) {
       // A draft has no number until it is issued; the status column already says draft.
       cell: (_, i) => i.label ?? <span className="oas-muted">—</span>,
     },
-    { name: "customer", header: "Customer", accessor: (i) => i.customer.name },
+    {
+      name: "customer",
+      header: phoneLabel("Customer", "Client"),
+      accessor: (i) => i.customer.name,
+    },
     { name: "issue_date", header: "Date", width: "120px" },
     { name: "due_date", header: "Due", width: "120px" },
     {

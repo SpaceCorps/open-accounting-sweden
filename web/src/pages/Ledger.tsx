@@ -37,6 +37,7 @@ import {
   notifyOk,
   type VatCode,
   prioritize,
+  phoneLabel,
 } from "../kit";
 import { amount, parseAmountInput } from "../format";
 import { DraftsTable, VouchersTable } from "./shared";
@@ -360,7 +361,7 @@ export function Ledger({ me }: { me: Me }) {
     { name: "balance", header: "Balance", align: "Right" },
   ];
   const accountColumns: DataTableColumn<Account>[] = [
-    { name: "number", header: "Number", width: "100px" },
+    { name: "number", header: phoneLabel("Number", "No."), width: "100px" },
     { name: "name", header: "Name" },
     {
       name: "kind",
