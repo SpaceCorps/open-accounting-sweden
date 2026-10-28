@@ -77,7 +77,7 @@ export function DraftsTable({
   const columns: DataTableColumn<Draft>[] = [
     { name: "id", header: "ID", width: "70px" },
     { name: "event_date", header: "Date", width: "120px" },
-    { name: "description", header: "Text", help: "Voucher text" },
+    { name: "description", header: "Description" },
     { name: "counterparty", header: "Counterparty" },
     {
       name: "amount",
@@ -180,7 +180,7 @@ export function VouchersTable({
       cell: (_, v) => v.label,
     },
     { name: "event_date", header: "Date", width: "120px" },
-    { name: "description", header: "Text", help: "Voucher text" },
+    { name: "description", header: "Description" },
     {
       name: "amount",
       header: "Amount",
