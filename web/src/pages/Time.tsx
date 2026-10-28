@@ -1138,6 +1138,7 @@ export function TimePage({ me }: { me: Me }) {
                 getRowId={(e) => String(e.id)}
                 getRowLabel={(e) => `${e.date} ${e.start} ${e.project}`}
                 defaultPageSize={25}
+                collapseRowActionsBelow={500}
                 rowActions={[
                   {
                     tag: "edit",
@@ -1178,6 +1179,7 @@ export function TimePage({ me }: { me: Me }) {
                 getRowId={(p) => String(p.id)}
                 getRowLabel={(p) => p.name}
                 paginated={false}
+                collapseRowActionsBelow={500}
                 rowActions={
                   me.can_approve
                     ? [

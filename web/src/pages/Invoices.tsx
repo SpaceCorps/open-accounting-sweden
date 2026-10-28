@@ -37,7 +37,7 @@ import {
   notifyOk,
   prioritize,
 } from "../kit";
-import { money } from "../format";
+import { amount, money } from "../format";
 
 function NewCustomer({
   open,
@@ -366,11 +366,13 @@ export function InvoicesPage({ me }: { me: Me }) {
     { name: "due_date", header: "Due", width: "120px" },
     {
       name: "net",
-      header: "Net",
+      // Invoices are in SEK only, so the currency sits in the header and the column stays narrow.
+      header: "Net (kr)",
       help: "Amount excluding VAT",
       align: "Right",
       accessor: (i) => parseFloat(i.totals.net),
-      cell: (_, i) => money(i.totals.net, i.currency),
+      cell: (_, i) =>
+        i.currency === "SEK" ? amount(i.totals.net) : money(i.totals.net, i.currency),
     },
     {
       name: "status",
@@ -451,6 +453,7 @@ export function InvoicesPage({ me }: { me: Me }) {
                 rows={list}
                 getRowId={(i) => String(i.id)}
                 getRowLabel={(i) => `${i.label ?? "Draft"} ${i.customer.name}`}
+                collapseRowActionsBelow={500}
                 rowActions={actions}
                 onRowAction={({ tag, row }) =>
                   tag === "view"

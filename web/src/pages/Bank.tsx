@@ -333,7 +333,7 @@ export function BankPage({ me }: { me: Me }) {
   const txMoney = (t: BankTx) => money(t.amount, t.currency);
   const txColumns: DataTableColumn<BankTx>[] = [
     { name: "date", header: "Date", width: "120px" },
-    { name: "counterparty", header: "Counterparty" },
+    { name: "counterparty", header: "Name", help: "Counterparty" },
     { name: "reference", header: "Reference" },
     {
       name: "amount",
@@ -491,6 +491,7 @@ export function BankPage({ me }: { me: Me }) {
                 rows={byStatus("new")}
                 getRowId={(t) => String(t.id)}
                 getRowLabel={(t) => `${t.date} ${t.counterparty}`}
+                collapseRowActionsBelow={500}
                 rowActions={toBookActions}
                 onRowAction={({ tag, row }) =>
                   tag === "book" ? setBooking(row) : void ignore(row)
@@ -520,6 +521,7 @@ export function BankPage({ me }: { me: Me }) {
                 rows={pending}
                 getRowId={(m) => String(m.id)}
                 getRowLabel={(m) => `${m.transaction.date} ${m.transaction.counterparty}`}
+                collapseRowActionsBelow={500}
                 rowActions={matchActions}
                 onRowAction={({ tag, row }) => void decide(row, tag as "confirm" | "decline")}
                 defaultPageSize={10}

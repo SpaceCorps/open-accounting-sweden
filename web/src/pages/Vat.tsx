@@ -247,6 +247,7 @@ export function VatPage({ me }: { me: Me }) {
               rows={r?.boxes ?? []}
               getRowId={(b) => b.box}
               getRowLabel={(b) => `Box ${b.box} ${b.label}`}
+              collapseRowActionsBelow={500}
               rowActions={boxActions}
               onRowAction={({ tag, row }) => {
                 if (tag === "unused" || tag === "used")

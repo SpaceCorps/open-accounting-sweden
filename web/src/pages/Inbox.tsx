@@ -295,6 +295,7 @@ export function InboxPage() {
             rows={docs.data?.documents ?? []}
             getRowId={(d) => String(d.id)}
             getRowLabel={(d) => d.vendor || d.filename}
+            collapseRowActionsBelow={500}
             rowActions={actions}
             onRowAction={({ tag, row }) => {
               if (tag === "edit") setEditing(row);

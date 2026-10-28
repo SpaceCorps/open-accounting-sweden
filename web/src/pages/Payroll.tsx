@@ -649,6 +649,7 @@ export function PayrollPage({ me }: { me: Me }) {
                 rows={list}
                 getRowId={(r) => String(r.id)}
                 getRowLabel={(r) => `Pay run ${r.period}`}
+                collapseRowActionsBelow={500}
                 rowActions={runActions}
                 onRowAction={({ tag, row }) => {
                   if (tag === "view") setViewing(row);
@@ -682,6 +683,7 @@ export function PayrollPage({ me }: { me: Me }) {
                 rows={employees.data?.employees ?? []}
                 getRowId={(e) => String(e.id)}
                 getRowLabel={(e) => e.name}
+                collapseRowActionsBelow={500}
                 rowActions={empActions}
                 onRowAction={({ row }) =>
                   void api(`/employees/${row.id}/deactivate`, { method: "POST" })
@@ -707,6 +709,7 @@ export function PayrollPage({ me }: { me: Me }) {
               rows={rates.data?.rates ?? []}
               getRowId={(r) => r.key}
               getRowLabel={(r) => r.label}
+              collapseRowActionsBelow={500}
               rowActions={rateActions}
               onRowAction={({ tag, row }) => {
                 if (tag === "edit") {
