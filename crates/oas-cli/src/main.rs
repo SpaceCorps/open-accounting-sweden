@@ -59,6 +59,8 @@ oas employee add NAME --identity YYYYMMDDNNNC | list | deactivate ID
 oas payroll run --period 2026-10 --pay-date 2026-10-25 --line EMPLOYEE_ID=GROSS[:TAX] ...   (admin; TAX in SEK, or GROSS:30% for a percentage)
 oas payroll list | show ID | approve ID | delete ID | agi ID [--out FILE] | rates | set-rate KEY VALUE | verify-rate KEY [--unverify] | not-used KEY [--used]
 oas customer add NAME --address STREET,POSTCODE,CITY [--org-number N --vat-number V --email E] | list
+oas customer edit NAME|ID [--name N] [--address A] [--org-number N] [--vat-number V] [--email E]   (issued invoices keep their details)
+oas customer delete NAME|ID [--yes]   (only a customer no invoice uses)
 oas invoice create --customer C --line 'Description|12.5|h|900' ... [--vat 25] [--due-days 30] | from-time --customer C --project P [--from D --to D] | list | show ID | issue ID | delete ID | html ID --out FILE
 oas agent-readme
 
@@ -320,6 +322,30 @@ enum CustomerCmd {
         email: Option<String>,
     },
     List,
+    /// Change a customer's details (issued invoices keep the details they were issued with)
+    Edit {
+        /// Customer name or id
+        customer: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        org_number: Option<String>,
+        #[arg(long)]
+        vat_number: Option<String>,
+        /// Postal address (use \n for line breaks)
+        #[arg(long)]
+        address: Option<String>,
+        #[arg(long)]
+        email: Option<String>,
+    },
+    /// Delete a customer that no invoice uses
+    Delete {
+        /// Customer name or id
+        customer: String,
+        /// Delete without asking (required when there is no terminal to ask on)
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1056,6 +1082,23 @@ fn meta_query(
     parts
 }
 
+/// A customer's id from its id or its name (case-insensitive).
+fn find_customer(cfg: &Config, wanted: &str) -> Result<i64, Failure> {
+    if let Ok(id) = wanted.trim().parse::<i64>() {
+        return Ok(id);
+    }
+    let v = call(cfg, "GET", "/customers", None)?;
+    let w = wanted.trim().to_lowercase();
+    v["customers"]
+        .as_array()
+        .and_then(|l| {
+            l.iter()
+                .find(|c| c["name"].as_str().is_some_and(|n| n.to_lowercase() == w))
+        })
+        .and_then(|c| c["id"].as_i64())
+        .ok_or_else(|| Failure::new("not_found", format!("no customer named '{wanted}'")))
+}
+
 fn failure_from(text: &str) -> Failure {
     let v: Value = serde_json::from_str(text).unwrap_or(Value::Null);
     let e = &v["error"];
@@ -1764,6 +1807,57 @@ fn run(cli: Cli) -> Result<(), Failure> {
                     print_value(&call(&cfg, "POST", "/customers", Some(&body))?, json_out);
                 }
                 CustomerCmd::List => print_value(&call(&cfg, "GET", "/customers", None)?, json_out),
+                CustomerCmd::Edit {
+                    customer,
+                    name,
+                    org_number,
+                    vat_number,
+                    address,
+                    email,
+                } => {
+                    let id = find_customer(&cfg, &customer)?;
+                    let mut body = json!({});
+                    for (key, value) in [
+                        ("name", name),
+                        ("org_number", org_number),
+                        ("vat_number", vat_number),
+                        ("address", address.map(|a| a.replace("\\n", "\n"))),
+                        ("email", email),
+                    ] {
+                        if let Some(v) = value {
+                            body[key] = json!(v);
+                        }
+                    }
+                    if body.as_object().is_some_and(|o| o.is_empty()) {
+                        return Err(Failure::new(
+                            "invalid_input",
+                            "nothing to change; pass --name, --org-number, --vat-number, --address or --email",
+                        ));
+                    }
+                    print_value(
+                        &call(&cfg, "PATCH", &format!("/customers/{id}"), Some(&body))?,
+                        json_out,
+                    );
+                }
+                CustomerCmd::Delete { customer, yes } => {
+                    let id = find_customer(&cfg, &customer)?;
+                    if !yes {
+                        if !std::io::stdin().is_terminal() {
+                            return Err(Failure::new(
+                                "invalid_input",
+                                "pass --yes to delete without a prompt",
+                            ));
+                        }
+                        let answer = ask(&format!("Delete customer {customer}? [y/N] "));
+                        if !matches!(answer.to_lowercase().as_str(), "y" | "yes") {
+                            return Err(Failure::new("cancelled", "nothing was deleted"));
+                        }
+                    }
+                    print_value(
+                        &call(&cfg, "DELETE", &format!("/customers/{id}"), None)?,
+                        json_out,
+                    );
+                }
             }
             Ok(())
         }

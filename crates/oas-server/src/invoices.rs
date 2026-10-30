@@ -32,6 +32,14 @@ CREATE TABLE IF NOT EXISTS customer(
   email TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS invoice_customer(
+  invoice_id INTEGER PRIMARY KEY REFERENCES invoice(id),
+  snapshot TEXT NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS invoice_customer_no_update BEFORE UPDATE ON invoice_customer
+  BEGIN SELECT RAISE(ABORT, 'an issued invoice cannot be changed'); END;
+CREATE TRIGGER IF NOT EXISTS invoice_customer_no_delete BEFORE DELETE ON invoice_customer
+  BEGIN SELECT RAISE(ABORT, 'an issued invoice cannot be changed'); END;
 CREATE TABLE IF NOT EXISTS invoice(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   series TEXT NOT NULL DEFAULT 'F',
@@ -160,6 +168,140 @@ fn customer_json(conn: &Connection, id: i64) -> Result<Value, ApiError> {
         },
     )
     .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such customer"))
+}
+
+/// The customer as an invoice shows it: the details saved when it was issued, or the customer's
+/// current details while it is a draft.
+fn invoice_customer(
+    conn: &Connection,
+    invoice_id: i64,
+    customer_id: i64,
+) -> Result<Value, ApiError> {
+    use rusqlite::OptionalExtension;
+    let saved: Option<String> = conn
+        .query_row(
+            "SELECT snapshot FROM invoice_customer WHERE invoice_id = ?1",
+            params![invoice_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    match saved.and_then(|s| serde_json::from_str(&s).ok()) {
+        Some(v) => Ok(v),
+        None => customer_json(conn, customer_id),
+    }
+}
+
+fn customer_id_of(conn: &Connection, invoice_id: i64) -> Result<i64, ApiError> {
+    Ok(conn.query_row(
+        "SELECT customer_id FROM invoice WHERE id = ?1",
+        params![invoice_id],
+        |r| r.get(0),
+    )?)
+}
+
+/// Invoices issued before snapshots existed get one from the customer as it is now. Nothing could
+/// edit a customer then, so these are still the details that were invoiced.
+pub fn backfill_customer_snapshots(conn: &Connection) -> Result<(), ApiError> {
+    let ids: Vec<(i64, i64)> = conn
+        .prepare(
+            "SELECT i.id, i.customer_id FROM invoice i
+             WHERE i.status = 'issued' AND NOT EXISTS (SELECT 1 FROM invoice_customer c WHERE c.invoice_id = i.id)",
+        )?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .filter_map(Result::ok)
+        .collect();
+    for (invoice_id, customer_id) in ids {
+        conn.execute(
+            "INSERT INTO invoice_customer(invoice_id, snapshot) VALUES (?1, ?2)",
+            params![invoice_id, customer_json(conn, customer_id)?.to_string()],
+        )?;
+    }
+    Ok(())
+}
+
+#[derive(Deserialize)]
+pub struct CustomerPatch {
+    name: Option<String>,
+    org_number: Option<String>,
+    vat_number: Option<String>,
+    address: Option<String>,
+    email: Option<String>,
+}
+
+/// Change a customer's details. Draft invoices follow; issued invoices keep the details they were
+/// issued with. The old and new values go to the audit log.
+pub async fn edit_customer(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    Json(b): Json<CustomerPatch>,
+) -> ApiResult {
+    let conn = st.conn.lock().unwrap();
+    let before = customer_json(&conn, id)?;
+    let field = |v: &Option<String>, key: &str, max: usize| -> Result<String, ApiError> {
+        match v {
+            Some(s) => clean(s, key, max),
+            None => Ok(before[key].as_str().unwrap_or("").to_string()),
+        }
+    };
+    let name = field(&b.name, "name", 100)?;
+    if name.is_empty() {
+        return Err(ApiError::invalid("customer name is empty"));
+    }
+    let org = field(&b.org_number, "org_number", 30)?;
+    let vat = field(&b.vat_number, "vat_number", 30)?;
+    let address = field(&b.address, "address", 300)?;
+    let email = field(&b.email, "email", 100)?;
+    conn.execute(
+        "UPDATE customer SET name = ?1, org_number = ?2, vat_number = ?3, address = ?4, email = ?5 WHERE id = ?6",
+        params![name, org, vat, address, email, id],
+    )
+    .map_err(|_| ApiError::new(StatusCode::CONFLICT, "conflict", "a customer with that name already exists"))?;
+    let after = customer_json(&conn, id)?;
+    if after != before {
+        ledger::audit(
+            &conn,
+            &actor,
+            "customer.edit",
+            &id.to_string(),
+            &json!({"old": before, "new": after}).to_string(),
+        )?;
+    }
+    Ok(Json(json!({"customer": after})))
+}
+
+/// Delete a customer that no invoice uses. A customer on an invoice stays, so the invoice can
+/// always be read in full.
+pub async fn delete_customer(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> ApiResult {
+    let conn = st.conn.lock().unwrap();
+    let before = customer_json(&conn, id)?;
+    let invoices: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM invoice WHERE customer_id = ?1",
+        params![id],
+        |r| r.get(0),
+    )?;
+    if invoices > 0 {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "in_use",
+            format!(
+                "this customer is on {invoices} invoice(s) and cannot be deleted; delete its draft invoices first"
+            ),
+        ));
+    }
+    conn.execute("DELETE FROM customer WHERE id = ?1", params![id])?;
+    ledger::audit(
+        &conn,
+        &actor,
+        "customer.delete",
+        &id.to_string(),
+        &before.to_string(),
+    )?;
+    Ok(Json(json!({"deleted": id})))
 }
 
 pub async fn list_customers(State(st): State<Shared>) -> ApiResult {
@@ -460,7 +602,7 @@ fn invoice_json(conn: &Connection, id: i64) -> Result<Value, ApiError> {
     Ok(json!({
         "id": id,
         "label": number.map(|n| format!("{series}{n}")),
-        "number": number, "status": status, "customer": customer_json(conn, customer_id)?,
+        "number": number, "status": status, "customer": invoice_customer(conn, id, customer_id)?,
         "issue_date": issue, "due_date": due, "service_date": service, "currency": currency,
         "vat_rate": vat_rate, "notes": notes, "created_by": created_by, "issued_by": issued_by, "issued_at": issued_at,
         "ledger_draft_id": draft, "time_entries": entries,
@@ -664,6 +806,13 @@ pub async fn issue_invoice(
         bank_transaction_id: None,
     };
     let draft_id = ledger::create_draft(&mut conn, &actor, &nd)?;
+    conn.execute(
+        "INSERT OR IGNORE INTO invoice_customer(invoice_id, snapshot) VALUES (?1, ?2)",
+        params![
+            id,
+            customer_json(&conn, customer_id_of(&conn, id)?)?.to_string()
+        ],
+    )?;
     conn.execute(
         "UPDATE invoice SET status = 'issued', number = ?1, issued_by = ?2, issued_at = ?3, ledger_draft_id = ?4 WHERE id = ?5",
         params![number, actor.name, utc_string(Utc::now()), draft_id, id],

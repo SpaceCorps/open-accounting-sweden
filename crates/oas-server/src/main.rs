@@ -182,6 +182,7 @@ fn open_db(path: &str) -> Result<Connection, rusqlite::Error> {
     conn.execute_batch(vat::SCHEMA)?;
     conn.execute_batch(payroll::SCHEMA)?;
     conn.execute_batch(invoices::SCHEMA)?;
+    invoices::backfill_customer_snapshots(&conn).map_err(|_| rusqlite::Error::InvalidQuery)?;
     ledger::migrate(&conn)?;
     ledger::seed(&conn)?;
     vat::seed(&conn)?;
@@ -1471,6 +1472,10 @@ fn router(state: Shared, web_dir: Option<&str>) -> Router {
             get(invoices::list_customers).post(invoices::add_customer),
         )
         .route(
+            "/customers/{id}",
+            axum::routing::patch(invoices::edit_customer).delete(invoices::delete_customer),
+        )
+        .route(
             "/invoices",
             get(invoices::list_invoices).post(invoices::create_invoice),
         )
@@ -2167,6 +2172,131 @@ mod tests {
             .0,
             409
         );
+    }
+
+    #[tokio::test]
+    async fn editing_a_customer_leaves_issued_invoices_as_they_were() {
+        let app = app();
+        let company =
+            json!({"name": "Bolaget AB", "org_number": "5590000000", "address": "Vägen 2"});
+        let (status, body) = call(&app, Some(ADMIN), "POST", "/api/company", Some(company)).await;
+        assert_eq!(status, 200, "{body}");
+        let (_, customer) = call(
+            &app,
+            Some(ADMIN),
+            "POST",
+            "/api/customers",
+            Some(json!({"name": "Kund AB", "address": "Gatan 1"})),
+        )
+        .await;
+        let customer_id = customer["customer"]["id"].as_i64().expect("customer id");
+        let invoice = |_: ()| {
+            json!({"customer_id": customer_id, "lines": [
+                {"description": "Work", "quantity": "1", "unit_price": "1000"}]})
+        };
+        let (_, issued) = call(
+            &app,
+            Some(ADMIN),
+            "POST",
+            "/api/invoices",
+            Some(invoice(())),
+        )
+        .await;
+        let issued = issued["invoice"]["id"].as_i64().expect("invoice id");
+        let (status, body) = call(
+            &app,
+            Some(ADMIN),
+            "POST",
+            &format!("/api/invoices/{issued}/issue"),
+            None,
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        let (_, draft) = call(
+            &app,
+            Some(ADMIN),
+            "POST",
+            "/api/invoices",
+            Some(invoice(())),
+        )
+        .await;
+        let draft = draft["invoice"]["id"].as_i64().expect("invoice id");
+
+        let customer_path = format!("/api/customers/{customer_id}");
+        let (status, body) = call(
+            &app,
+            Some(ADMIN),
+            "PATCH",
+            &customer_path,
+            Some(json!({"address": "Nya gatan 3", "email": "ekonomi@kund.se"})),
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["customer"]["address"], "Nya gatan 3");
+        assert_eq!(body["customer"]["name"], "Kund AB");
+        let address = |v: Value| v["invoice"]["customer"]["address"].clone();
+        let get = |id: i64| format!("/api/invoices/{id}");
+        assert_eq!(
+            address(call(&app, Some(ADMIN), "GET", &get(issued), None).await.1),
+            "Gatan 1"
+        );
+        assert_eq!(
+            address(call(&app, Some(ADMIN), "GET", &get(draft), None).await.1),
+            "Nya gatan 3"
+        );
+        let (_, audit) = call(&app, Some(ADMIN), "GET", "/api/audit", None).await;
+        assert_eq!(audit["audit"][0]["action"], "customer.edit", "{audit}");
+
+        // A second customer with the same name, or an empty name, is refused.
+        call(
+            &app,
+            Some(ADMIN),
+            "POST",
+            "/api/customers",
+            Some(json!({"name": "Annan AB", "address": "Torget 4"})),
+        )
+        .await;
+        let rename = |name: &str| Some(json!({ "name": name }));
+        assert_eq!(
+            call(
+                &app,
+                Some(ADMIN),
+                "PATCH",
+                &customer_path,
+                rename("Annan AB")
+            )
+            .await
+            .0,
+            409
+        );
+        assert_eq!(
+            call(&app, Some(ADMIN), "PATCH", &customer_path, rename("  "))
+                .await
+                .0,
+            400
+        );
+
+        // Invoiced customers stay; once only the draft used it and that is deleted, so can the customer.
+        let (status, err) = call(&app, Some(ADMIN), "DELETE", &customer_path, None).await;
+        assert_eq!(status, 409, "{err}");
+        assert_eq!(err["error"]["code"], "in_use");
+        let (_, other) = call(&app, Some(ADMIN), "GET", "/api/customers", None).await;
+        let other_id = other["customers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == "Annan AB")
+            .and_then(|c| c["id"].as_i64())
+            .unwrap();
+        let other_path = format!("/api/customers/{other_id}");
+        let (status, body) = call(&app, Some(ADMIN), "DELETE", &other_path, None).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(
+            call(&app, Some(ADMIN), "DELETE", &other_path, None).await.0,
+            404
+        );
+        let (_, audit) = call(&app, Some(ADMIN), "GET", "/api/audit", None).await;
+        assert_eq!(audit["audit"][0]["action"], "customer.delete", "{audit}");
     }
 
     #[test]
