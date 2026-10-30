@@ -64,6 +64,10 @@ check "an issued invoice cannot be edited or deleted" 'refused "UPDATE invoice S
 check "the printable invoice has the required fields" 'admin invoice html 1 --out $T/inv.html >/dev/null && grep -q "Invoice F1" $T/inv.html && grep -q "VAT no: SE5560269986" $T/inv.html && grep -q "Kund AB" $T/inv.html && grep -q "225.00" $T/inv.html'
 check "customer names cannot inject markup into the invoice" 'admin customer add "<script>x</script> AB" --address "Gatan 1" >/dev/null && admin invoice create --customer "<script>x</script> AB" --line "x|1|st|1" >/dev/null && admin invoice html 3 --out $T/inv2.html >/dev/null && ! grep -q "<script>x" $T/inv2.html'
 check "foreign customers are refused for now" '! admin customer add "Foreign Ltd" --country DE --address "Strasse 1" >/dev/null || ! admin invoice create --customer "Foreign Ltd" --line "x|1|st|1"'
+check "editing a customer leaves the issued invoice as it was" 'admin customer edit "Kund AB" --address "Nya gatan 9, 222 33 Goteborg" --email ekonomi@kund.se >/dev/null && admin invoice html 1 --out $T/inv3.html >/dev/null && grep -q "Kundgatan 2" $T/inv3.html && ! grep -q "Nya gatan 9" $T/inv3.html && admin customer list | grep -q "Nya gatan 9"'
+check "a customer edit is in the audit log" 'admin --json ledger audit | python3 -c "import sys,json; sys.exit(0 if any(r[\"action\"]==\"customer.edit\" for r in json.load(sys.stdin)[\"audit\"]) else 1)"'
+check "an invoiced customer cannot be deleted" '! admin customer delete "Kund AB" --yes'
+check "an unused customer can be deleted" 'admin customer add "Tillfallig AB" >/dev/null && admin customer delete "Tillfallig AB" --yes >/dev/null && ! admin customer list | grep -q "Tillfallig AB"'
 
 printf 'receipt' > $T/r.txt
 printf 'Datum;Text;Belopp\n2026-10-21;GITHUB INC;-40,00\n' > $T/b.csv

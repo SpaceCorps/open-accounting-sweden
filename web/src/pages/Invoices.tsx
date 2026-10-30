@@ -21,8 +21,8 @@ import {
   type DataTableColumn,
   type DataTableRowAction,
 } from "@spacecorps/components/ui";
-import { Check, Eye, FileText, Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { Check, Eye, FileText, Pencil, Plus, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { api, openInvoicePage, type Customer, type Invoice, type Me, type Project } from "../api";
 import { useData } from "../hooks";
 import {
@@ -40,30 +40,47 @@ import {
 } from "../kit";
 import { amount, money } from "../format";
 
-function NewCustomer({
+/** Add a customer, or change one when `editing` is set. */
+function CustomerDialog({
   open,
+  editing,
   onOpenChange,
   onDone,
 }: {
   open: boolean;
+  editing: Customer | null;
   onOpenChange: (o: boolean) => void;
   onDone: () => void;
 }) {
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
   const [org, setOrg] = useState("");
+  const [vat, setVat] = useState("");
   const [email, setEmail] = useState("");
+  useEffect(() => {
+    if (!open) return;
+    setName(editing?.name ?? "");
+    setAddress(editing?.address.replace(/\n/g, ", ") ?? "");
+    setOrg(editing?.org_number ?? "");
+    setVat(editing?.vat_number ?? "");
+    setEmail(editing?.email ?? "");
+  }, [open, editing]);
   async function save() {
+    const body = {
+      name,
+      address: address.replace(/, */g, "\n"),
+      org_number: org,
+      vat_number: vat,
+      email,
+    };
     try {
-      await api("/customers", {
-        method: "POST",
-        body: { name, address: address.replace(/, */g, "\n"), org_number: org, email },
-      });
-      notifyOk("Customer added", name);
-      setName("");
-      setAddress("");
-      setOrg("");
-      setEmail("");
+      if (editing) {
+        await api(`/customers/${editing.id}`, { method: "PATCH", body });
+        notifyOk("Customer saved", "Issued invoices keep the details they were issued with.");
+      } else {
+        await api("/customers", { method: "POST", body });
+        notifyOk("Customer added", name);
+      }
       onOpenChange(false);
       onDone();
     } catch (e) {
@@ -74,9 +91,11 @@ function NewCustomer({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New customer</DialogTitle>
+          <DialogTitle>{editing ? "Edit customer" : "New customer"}</DialogTitle>
           <DialogDescription>
-            Customers in Sweden only for now. The address is required to issue an invoice.
+            {editing
+              ? "Draft invoices use the new details. Issued invoices keep the details they were issued with."
+              : "Customers in Sweden only for now. The address is required to issue an invoice."}
           </DialogDescription>
         </DialogHeader>
         <form
@@ -96,6 +115,7 @@ function NewCustomer({
                 hint="Street, postcode and city, separated by commas"
               />
               <TextField label="Organisation number" value={org} onChange={setOrg} />
+              <TextField label="VAT number" value={vat} onChange={setVat} />
               <TextField label="Email" value={email} onChange={setEmail} />
             </div>
           </DialogBody>
@@ -104,7 +124,7 @@ function NewCustomer({
               Cancel
             </Button>
             <Button disabled={!name.trim()} type="submit">
-              Add
+              {editing ? "Save" : "Add"}
             </Button>
           </DialogFooter>
         </form>
@@ -325,6 +345,8 @@ export function InvoicesPage({ me }: { me: Me }) {
   const projects = useData<{ projects: Project[] }>("/projects");
   const [newInvoice, setNewInvoice] = useState(false);
   const [newCustomer, setNewCustomer] = useState(false);
+  const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
+  const [deleteCustomer, setDeleteCustomer] = useState<Customer | null>(null);
   const [viewing, setViewing] = useState<Invoice | null>(null);
   const [confirm, setConfirm] = useState<{ inv: Invoice; what: "issue" | "delete" } | null>(null);
 
@@ -405,6 +427,29 @@ export function InvoicesPage({ me }: { me: Me }) {
         ]
       : []),
   ];
+  async function removeCustomer(c: Customer) {
+    setDeleteCustomer(null);
+    try {
+      await api(`/customers/${c.id}`, { method: "DELETE" });
+      notifyOk("Customer deleted", c.name);
+      reload();
+    } catch (e) {
+      notifyError(e);
+    }
+  }
+  // A customer on any invoice, draft or issued, stays.
+  const invoiced = new Set(list.map((i) => i.customer.id));
+  const custActions = (c: Customer): DataTableRowAction<Customer>[] => [
+    { tag: "edit", label: "Edit", icon: <Pencil aria-hidden="true" />, tooltip: "Edit customer" },
+    {
+      tag: "delete",
+      label: "Delete",
+      icon: <Trash2 aria-hidden="true" />,
+      tooltip: invoiced.has(c.id) ? "On an invoice, so it cannot be deleted" : "Delete customer",
+      variant: "destructive",
+      disabled: invoiced.has(c.id),
+    },
+  ];
   const custColumns: DataTableColumn<Customer>[] = [
     { name: "name", header: "Name" },
     { name: "org_number", header: "Org no" },
@@ -483,13 +528,29 @@ export function InvoicesPage({ me }: { me: Me }) {
                 rows={customers.data?.customers ?? []}
                 getRowId={(c) => String(c.id)}
                 getRowLabel={(c) => c.name}
+                collapseRowActionsBelow={500}
+                rowActions={custActions}
+                onRowAction={({ tag, row }) =>
+                  tag === "edit" ? setEditCustomer(row) : setDeleteCustomer(row)
+                }
+                onRowClick={(row) => setEditCustomer(row)}
                 paginated={false}
               />
             )}
           </Section>
         </TabsContent>
       </Tabs>
-      <NewCustomer open={newCustomer} onOpenChange={setNewCustomer} onDone={reload} />
+      <CustomerDialog
+        open={newCustomer || editCustomer !== null}
+        editing={editCustomer}
+        onOpenChange={(o) => {
+          if (!o) {
+            setNewCustomer(false);
+            setEditCustomer(null);
+          }
+        }}
+        onDone={reload}
+      />
       <NewInvoice
         open={newInvoice}
         onOpenChange={setNewInvoice}
@@ -509,6 +570,14 @@ export function InvoicesPage({ me }: { me: Me }) {
         confirmLabel={confirm?.what === "issue" ? "Issue" : "Delete"}
         onConfirm={() => confirm && void act(confirm.inv, confirm.what)}
         onCancel={() => setConfirm(null)}
+      />
+      <ConfirmDialog
+        open={deleteCustomer !== null}
+        title="Delete this customer?"
+        description={`${deleteCustomer?.name ?? ""} is on no invoice and is removed for good.`}
+        confirmLabel="Delete"
+        onConfirm={() => deleteCustomer && void removeCustomer(deleteCustomer)}
+        onCancel={() => setDeleteCustomer(null)}
       />
     </>
   );
