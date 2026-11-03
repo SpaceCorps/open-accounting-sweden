@@ -55,11 +55,12 @@ scripts/check.sh            # fmt, clippy (warnings are errors), tests, web chec
 Or one at a time:
 
 ```bash
-cargo test --workspace      # core logic, API tests against an in-memory database, CLI error envelope
+cargo nextest run --workspace   # core logic, API tests against an in-memory database, CLI error envelope
+cargo test --workspace --doc    # doctests (nextest skips them)
 scripts/smoke.sh            # end to end against a throwaway server: auth, ledger rules, VAT, receipts, payroll
 ```
 
-The smoke test needs `curl`, `sqlite3` and `python3` on the PATH (on Windows: `winget install SQLite.SQLite`).
+Tests run with [cargo-nextest](https://nexte.st) (`cargo install --locked cargo-nextest`). The smoke test needs `curl`, `sqlite3` and `python3` on the PATH (on Windows: `winget install SQLite.SQLite`).
 
 To look at the web panel with realistic data, `scripts/demo.sh` starts a throwaway server with a month of demo bookkeeping on port 18990. Sign in as `demo` / `demo-password-123`.
 
