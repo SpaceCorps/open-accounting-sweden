@@ -261,16 +261,35 @@ export interface Invoice {
   time_entries: number;
 }
 
-/** Fetch the printable invoice with the session token and open it in a new tab. */
+/**
+ * Fetch the printable invoice with the session token and show it in a new tab.
+ * The tab is opened on the click itself, before the fetch, so popup blockers allow it
+ * (a window opened after an await has no user gesture behind it). The HTML is then
+ * written into it: some browsers refuse to open a blob: URL in a new tab.
+ */
 export async function openInvoicePage(id: number) {
-  const res = await fetch(`/api/invoices/${id}/html`, {
-    headers: { Authorization: `Bearer ${getToken()}` },
-  });
-  if (!res.ok) throw new ApiError(res.status, "error", "could not load the invoice");
-  const html = await res.text();
-  const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
-  window.open(url, "_blank", "noopener");
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  const win = window.open("", "_blank");
+  if (!win) {
+    throw new ApiError(
+      0,
+      "popup_blocked",
+      "the browser blocked the new tab; allow pop-ups for this site",
+    );
+  }
+  win.opener = null;
+  try {
+    const res = await fetch(`/api/invoices/${id}/html`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    if (!res.ok) throw new ApiError(res.status, "error", "could not load the invoice");
+    const html = await res.text();
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+  } catch (e) {
+    win.close();
+    throw e;
+  }
 }
 
 export interface Income {
