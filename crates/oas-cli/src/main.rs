@@ -61,7 +61,7 @@ oas payroll list | show ID | approve ID | delete ID | agi ID [--out FILE] | rate
 oas customer add NAME --address STREET,POSTCODE,CITY [--org-number N --vat-number V --email E] | list
 oas customer edit NAME|ID [--name N] [--address A] [--org-number N] [--vat-number V] [--email E]   (issued invoices keep their details)
 oas customer delete NAME|ID [--yes]   (only a customer no invoice uses)
-oas invoice create --customer C --line 'Description|12.5|h|900' ... [--vat 25] [--due-days 30] | from-time --customer C --project P [--from D --to D] | list | show ID | issue ID | delete ID | html ID --out FILE
+oas invoice create --customer C --line 'Description|12.5|h|900' ... [--vat 25] [--due-days 30] | from-time --customer C --project P [--from D --to D] | add-line ID --line '...' | remove-line ID LINE_ID | list | show ID | issue ID | delete ID | html ID --out FILE
 oas agent-readme
 
 ## Invoices
@@ -390,6 +390,18 @@ enum InvoiceCmd {
     List,
     Show {
         id: i64,
+    },
+    /// Add a line, such as a fixed cost, to a draft invoice
+    AddLine {
+        id: i64,
+        /// DESCRIPTION|QUANTITY|UNIT|UNIT_PRICE, for example "Domain and hosting|1|st|1200"
+        #[arg(long)]
+        line: String,
+    },
+    /// Remove a line from a draft invoice (the line id is in `invoice show`)
+    RemoveLine {
+        id: i64,
+        line_id: i64,
     },
     /// Assign the invoice number, lock it and propose the ledger voucher (admin only)
     Issue {
@@ -1927,6 +1939,29 @@ fn run(cli: Cli) -> Result<(), Failure> {
                 InvoiceCmd::List => print_value(&call(&cfg, "GET", "/invoices", None)?, json_out),
                 InvoiceCmd::Show { id } => print_value(
                     &call(&cfg, "GET", &format!("/invoices/{id}"), None)?,
+                    json_out,
+                ),
+                InvoiceCmd::AddLine { id, line } => {
+                    let p: Vec<&str> = line.split('|').collect();
+                    if p.len() != 4 {
+                        return Err(Failure::new(
+                            "invalid_input",
+                            format!("expected DESCRIPTION|QUANTITY|UNIT|UNIT_PRICE, got '{line}'"),
+                        ));
+                    }
+                    let body = json!({"description": p[0].trim(), "quantity": p[1].trim(), "unit": p[2].trim(), "unit_price": p[3].trim()});
+                    print_value(
+                        &call(&cfg, "POST", &format!("/invoices/{id}/lines"), Some(&body))?,
+                        json_out,
+                    );
+                }
+                InvoiceCmd::RemoveLine { id, line_id } => print_value(
+                    &call(
+                        &cfg,
+                        "POST",
+                        &format!("/invoices/{id}/lines/{line_id}/delete"),
+                        None,
+                    )?,
                     json_out,
                 ),
                 InvoiceCmd::Issue { id } => print_value(

@@ -1481,6 +1481,11 @@ fn router(state: Shared, web_dir: Option<&str>) -> Router {
         )
         .route("/invoices/from-time", post(invoices::from_time))
         .route("/invoices/{id}", get(invoices::get_invoice))
+        .route("/invoices/{id}/lines", post(invoices::add_line))
+        .route(
+            "/invoices/{id}/lines/{line_id}/delete",
+            post(invoices::remove_line),
+        )
         .route("/invoices/{id}/issue", post(invoices::issue_invoice))
         .route("/invoices/{id}/delete", post(invoices::delete_invoice))
         .route("/invoices/{id}/html", get(invoices::invoice_html))
@@ -2172,6 +2177,64 @@ mod tests {
             .0,
             409
         );
+    }
+
+    #[tokio::test]
+    async fn a_fixed_cost_line_can_be_added_to_a_draft_but_not_an_issued_invoice() {
+        let app = app();
+        let (_, customer) = call(
+            &app,
+            Some(ADMIN),
+            "POST",
+            "/api/customers",
+            Some(json!({"name": "Kund AB", "address": "Gatan 1"})),
+        )
+        .await;
+        let cid = customer["customer"]["id"].as_i64().expect("customer id");
+        let (status, inv) = call(
+            &app,
+            Some(ADMIN),
+            "POST",
+            "/api/invoices",
+            Some(json!({"customer_id": cid, "lines": [
+                {"description": "Consulting", "quantity": "2", "unit": "h", "unit_price": "900"}]})),
+        )
+        .await;
+        assert_eq!(status, 200, "{inv}");
+        let id = inv["invoice"]["id"].as_i64().unwrap();
+        let (status, body) = call(
+            &app,
+            Some(ADMIN),
+            "POST",
+            &format!("/api/invoices/{id}/lines"),
+            Some(json!({"description": "Hosting", "quantity": "1", "unit": "st", "unit_price": "1200"})),
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["invoice"]["lines"].as_array().unwrap().len(), 2);
+        assert_eq!(body["invoice"]["totals"]["net"], "3000.00");
+        let line_id = body["invoice"]["lines"][1]["id"].as_i64().unwrap();
+        let (status, body) = call(
+            &app,
+            Some(ADMIN),
+            "POST",
+            &format!("/api/invoices/{id}/lines/{line_id}/delete"),
+            None,
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["invoice"]["totals"]["net"], "1800.00");
+        // The last line cannot be removed.
+        let only = body["invoice"]["lines"][0]["id"].as_i64().unwrap();
+        let (status, _) = call(
+            &app,
+            Some(ADMIN),
+            "POST",
+            &format!("/api/invoices/{id}/lines/{only}/delete"),
+            None,
+        )
+        .await;
+        assert_eq!(status, 400);
     }
 
     #[tokio::test]
