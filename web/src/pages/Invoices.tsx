@@ -294,13 +294,62 @@ function NewInvoice({
   );
 }
 
-function ViewInvoice({ invoice, onClose }: { invoice: Invoice | null; onClose: () => void }) {
+function ViewInvoice({
+  invoice,
+  onClose,
+  onChanged,
+}: {
+  invoice: Invoice | null;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const [description, setDescription] = useState("");
+  const [quantity, setQuantity] = useState("1");
+  const [unitPrice, setUnitPrice] = useState("");
+  const draft = invoice?.status === "draft";
   const cols: DataTableColumn<Invoice["lines"][number]>[] = [
     { name: "description", header: "Description", wrapText: true },
     { name: "quantity", header: "Qty", align: "Right", accessor: (l) => `${l.quantity} ${l.unit}` },
     { name: "unit_price", header: "Unit price", align: "Right" },
     { name: "net", header: "Amount", align: "Right" },
   ];
+  const rowActions = (): DataTableRowAction<Invoice["lines"][number]>[] =>
+    draft && invoice && invoice.lines.length > 1
+      ? [
+          {
+            tag: "remove",
+            label: "Remove",
+            icon: <Trash2 aria-hidden="true" />,
+            tooltip: "Remove this line",
+            variant: "destructive" as const,
+          },
+        ]
+      : [];
+  async function addLine() {
+    if (!invoice) return;
+    try {
+      await api(`/invoices/${invoice.id}/lines`, {
+        method: "POST",
+        body: { description, quantity, unit: "st", unit_price: unitPrice },
+      });
+      setDescription("");
+      setQuantity("1");
+      setUnitPrice("");
+      notifyOk("Line added", description);
+      onChanged();
+    } catch (e) {
+      notifyError(e);
+    }
+  }
+  async function removeLine(lineId: number) {
+    if (!invoice) return;
+    try {
+      await api(`/invoices/${invoice.id}/lines/${lineId}/delete`, { method: "POST" });
+      onChanged();
+    } catch (e) {
+      notifyError(e);
+    }
+  }
   return (
     <Dialog open={invoice !== null} onOpenChange={(o) => !o && onClose()}>
       <DialogContent style={{ maxWidth: 760 }}>
@@ -311,7 +360,8 @@ function ViewInvoice({ invoice, onClose }: { invoice: Invoice | null; onClose: (
                 {invoice.label ?? "Draft invoice"} for {invoice.customer.name}
               </DialogTitle>
               <DialogDescription>
-                Issued {invoice.issue_date}, due {invoice.due_date}. VAT {invoice.vat_rate}%:{" "}
+                Issued {invoice.issue_date}, due {invoice.due_date}. Net{" "}
+                {money(invoice.totals.net, invoice.currency)}, VAT {invoice.vat_rate}%:{" "}
                 {money(invoice.totals.vat, invoice.currency)}. Total{" "}
                 {money(invoice.totals.gross, invoice.currency)}.
               </DialogDescription>
@@ -320,9 +370,45 @@ function ViewInvoice({ invoice, onClose }: { invoice: Invoice | null; onClose: (
               <DataTable
                 columns={cols}
                 rows={invoice.lines}
-                getRowId={(_, i) => String(i)}
+                getRowId={(l) => String(l.id)}
                 paginated={false}
+                rowActions={rowActions}
+                onRowAction={({ row }) => void removeLine(row.id)}
               />
+              {draft ? (
+                <form
+                  className="oas-form"
+                  style={{ marginTop: "1rem" }}
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void addLine();
+                  }}
+                >
+                  <TextField
+                    label="Add a fixed cost"
+                    value={description}
+                    onChange={setDescription}
+                    hint="For example hosting, a licence or travel."
+                  />
+                  <div className="oas-form-row">
+                    <TextField label="Quantity" value={quantity} onChange={setQuantity} />
+                    <TextField
+                      label="Unit price (SEK, excl. VAT)"
+                      value={unitPrice}
+                      onChange={setUnitPrice}
+                    />
+                  </div>
+                  <div>
+                    <Button
+                      type="submit"
+                      variant="outline"
+                      disabled={!description.trim() || !unitPrice.trim()}
+                    >
+                      <Plus /> Add line
+                    </Button>
+                  </div>
+                </form>
+              ) : null}
             </DialogBody>
             <DialogFooter>
               <Button
@@ -347,7 +433,7 @@ export function InvoicesPage({ me }: { me: Me }) {
   const [newCustomer, setNewCustomer] = useState(false);
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
   const [deleteCustomer, setDeleteCustomer] = useState<Customer | null>(null);
-  const [viewing, setViewing] = useState<Invoice | null>(null);
+  const [viewingId, setViewingId] = useState<number | null>(null);
   const [confirm, setConfirm] = useState<{ inv: Invoice; what: "issue" | "delete" } | null>(null);
 
   const reload = () => {
@@ -356,6 +442,7 @@ export function InvoicesPage({ me }: { me: Me }) {
     projects.reload();
   };
   const list = invoices.data?.invoices ?? [];
+  const viewing = list.find((i) => i.id === viewingId) ?? null;
 
   async function act(inv: Invoice, what: "issue" | "delete") {
     setConfirm(null);
@@ -507,10 +594,10 @@ export function InvoicesPage({ me }: { me: Me }) {
                 rowActions={actions}
                 onRowAction={({ tag, row }) =>
                   tag === "view"
-                    ? setViewing(row)
+                    ? setViewingId(row.id)
                     : setConfirm({ inv: row, what: tag as "issue" | "delete" })
                 }
-                onRowClick={(row) => setViewing(row)}
+                onRowClick={(row) => setViewingId(row.id)}
                 defaultSort={{ column: "label", direction: "Descending" }}
                 defaultPageSize={25}
                 caption="Invoices"
@@ -558,7 +645,7 @@ export function InvoicesPage({ me }: { me: Me }) {
         projects={projects.data?.projects ?? []}
         onDone={reload}
       />
-      <ViewInvoice invoice={viewing} onClose={() => setViewing(null)} />
+      <ViewInvoice invoice={viewing} onClose={() => setViewingId(null)} onChanged={reload} />
       <ConfirmDialog
         open={confirm !== null}
         title={confirm?.what === "issue" ? "Issue this invoice?" : "Delete this draft?"}

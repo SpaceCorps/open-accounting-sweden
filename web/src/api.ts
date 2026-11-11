@@ -237,6 +237,7 @@ export interface Customer {
   email: string;
 }
 export interface InvoiceLine {
+  id: number;
   description: string;
   quantity: string;
   unit: string;

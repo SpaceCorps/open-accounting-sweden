@@ -379,6 +379,26 @@ fn vat_rate_ok(r: Option<i64>) -> Result<i64, ApiError> {
     }
 }
 
+/// Validate one invoice line: description, quantity above zero, unit price, unit defaulting to "st".
+fn parse_line(l: &LineBody) -> Result<(String, i64, String, i64), ApiError> {
+    let description = clean(&l.description, "description", 200)?;
+    if description.is_empty() {
+        return Err(ApiError::invalid("every line needs a description"));
+    }
+    let quantity = parse_amount(&l.quantity).map_err(ApiError::invalid)?;
+    if quantity == 0 {
+        return Err(ApiError::invalid("quantity must be above zero"));
+    }
+    let unit_price = parse_amount(&l.unit_price).map_err(ApiError::invalid)?;
+    let unit = clean(l.unit.as_deref().unwrap_or("st"), "unit", 12)?;
+    Ok((
+        description,
+        quantity,
+        if unit.is_empty() { "st".into() } else { unit },
+        unit_price,
+    ))
+}
+
 fn insert_invoice(
     conn: &Connection,
     actor: &Actor,
@@ -400,22 +420,7 @@ fn insert_invoice(
     }
     let mut parsed = vec![];
     for l in &b.lines {
-        let description = clean(&l.description, "description", 200)?;
-        if description.is_empty() {
-            return Err(ApiError::invalid("every line needs a description"));
-        }
-        let quantity = parse_amount(&l.quantity).map_err(ApiError::invalid)?;
-        if quantity == 0 {
-            return Err(ApiError::invalid("quantity must be above zero"));
-        }
-        let unit_price = parse_amount(&l.unit_price).map_err(ApiError::invalid)?;
-        let unit = clean(l.unit.as_deref().unwrap_or("st"), "unit", 12)?;
-        parsed.push((
-            description,
-            quantity,
-            if unit.is_empty() { "st".into() } else { unit },
-            unit_price,
-        ));
+        parsed.push(parse_line(l)?);
     }
     conn.execute(
         "INSERT INTO invoice(customer_id, issue_date, due_date, service_date, vat_rate, notes, created_by, created_at)
@@ -447,6 +452,99 @@ pub async fn create_invoice(
     let mut conn = st.conn.lock().unwrap();
     let tx = conn.transaction()?;
     let id = insert_invoice(&tx, &actor, &b, &[])?;
+    tx.commit()?;
+    Ok(Json(json!({"invoice": invoice_json(&conn, id)?})))
+}
+
+/// The invoice must exist and still be a draft; issued invoices are locked.
+fn draft_or_err(conn: &Connection, id: i64) -> Result<(), ApiError> {
+    let status: Option<String> = conn
+        .query_row(
+            "SELECT status FROM invoice WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .ok();
+    match status.as_deref() {
+        None => Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "no such invoice",
+        )),
+        Some("draft") => Ok(()),
+        Some(_) => Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            "this invoice is issued and cannot be changed",
+        )),
+    }
+}
+
+/// Add a line, such as a fixed cost, to a draft invoice. The line can sit next to billed time.
+pub async fn add_line(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<i64>,
+    Json(b): Json<LineBody>,
+) -> ApiResult {
+    let mut conn = st.conn.lock().unwrap();
+    let tx = conn.transaction()?;
+    draft_or_err(&tx, id)?;
+    let (d, q, u, p) = parse_line(&b)?;
+    let count: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM invoice_line WHERE invoice_id = ?1",
+        params![id],
+        |r| r.get(0),
+    )?;
+    if count >= 100 {
+        return Err(ApiError::invalid("an invoice has at most 100 lines"));
+    }
+    tx.execute(
+        "INSERT INTO invoice_line(invoice_id, description, quantity, unit, unit_price) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![id, d, q, u, p],
+    )?;
+    ledger::audit(&tx, &actor, "invoice.line_add", &id.to_string(), &d)?;
+    tx.commit()?;
+    Ok(Json(json!({"invoice": invoice_json(&conn, id)?})))
+}
+
+/// Remove one line from a draft invoice. The last line stays: delete the draft instead.
+pub async fn remove_line(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    Path((id, line_id)): Path<(i64, i64)>,
+) -> ApiResult {
+    let mut conn = st.conn.lock().unwrap();
+    let tx = conn.transaction()?;
+    draft_or_err(&tx, id)?;
+    let count: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM invoice_line WHERE invoice_id = ?1",
+        params![id],
+        |r| r.get(0),
+    )?;
+    if count <= 1 {
+        return Err(ApiError::invalid(
+            "an invoice needs at least one line; delete the draft instead",
+        ));
+    }
+    let n = tx.execute(
+        "DELETE FROM invoice_line WHERE id = ?1 AND invoice_id = ?2",
+        params![line_id, id],
+    )?;
+    if n == 0 {
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "no such line on this invoice",
+        ));
+    }
+    ledger::audit(
+        &tx,
+        &actor,
+        "invoice.line_remove",
+        &id.to_string(),
+        &line_id.to_string(),
+    )?;
     tx.commit()?;
     Ok(Json(json!({"invoice": invoice_json(&conn, id)?})))
 }
@@ -588,6 +686,11 @@ fn invoice_json(conn: &Connection, id: i64) -> Result<Value, ApiError> {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?, r.get(12)?, r.get(13)?)),
         )
         .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such invoice"))?;
+    let line_ids: Vec<i64> = conn
+        .prepare("SELECT id FROM invoice_line WHERE invoice_id = ?1 ORDER BY id")?
+        .query_map(params![id], |r| r.get(0))?
+        .filter_map(Result::ok)
+        .collect();
     let lines: Vec<(String, i64, String, i64)> = conn
         .prepare("SELECT description, quantity, unit, unit_price FROM invoice_line WHERE invoice_id = ?1 ORDER BY id")?
         .query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
@@ -606,8 +709,8 @@ fn invoice_json(conn: &Connection, id: i64) -> Result<Value, ApiError> {
         "issue_date": issue, "due_date": due, "service_date": service, "currency": currency,
         "vat_rate": vat_rate, "notes": notes, "created_by": created_by, "issued_by": issued_by, "issued_at": issued_at,
         "ledger_draft_id": draft, "time_entries": entries,
-        "lines": lines.iter().map(|(d, q, u, p)| json!({
-            "description": d, "quantity": format_amount(*q), "unit": u, "unit_price": format_amount(*p),
+        "lines": lines.iter().zip(&line_ids).map(|((d, q, u, p), lid)| json!({
+            "id": lid, "description": d, "quantity": format_amount(*q), "unit": u, "unit_price": format_amount(*p),
             "net": format_amount(line_net(*q, *p)),
         })).collect::<Vec<_>>(),
         "totals": {"net": format_amount(t.net), "vat": format_amount(t.vat), "gross": format_amount(t.gross)},
