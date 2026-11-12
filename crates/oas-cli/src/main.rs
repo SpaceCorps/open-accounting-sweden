@@ -66,8 +66,10 @@ oas agent-readme
 
 ## Invoices
 - Domestic customers only (country SE), VAT 25, 12 or 6 percent. `invoice from-time` bills a project's
-  uninvoiced tracked hours at its hourly rate (or its fixed fee) and marks those entries invoiced so
-  they cannot be billed twice. Set the rate first with `oas project rate`.
+  uninvoiced tracked hours at its hourly rate and marks those entries invoiced so they cannot be
+  billed twice. A fixed-fee project is billed as one line at the fee, with or without logged time;
+  `--from` and `--to` (the period the fee covers) are required when no time is logged, and an
+  overlapping period for the same project is refused until the earlier draft is deleted. Set the rate first with `oas project rate`.
 - Anyone can create a draft. Only an admin runs `invoice issue`, which assigns the next gap-free
   number, locks the invoice and proposes the ledger voucher (1510 / 3041-3043 / 2611-2631); a human
   still approves that voucher. Issuing needs the company address and the customer's address.

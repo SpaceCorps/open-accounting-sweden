@@ -71,6 +71,14 @@ CREATE TABLE IF NOT EXISTS invoiced_entry(
   entry_id INTEGER PRIMARY KEY REFERENCES time_entry(id),
   invoice_id INTEGER NOT NULL REFERENCES invoice(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS invoiced_period(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project TEXT NOT NULL,
+  from_date TEXT NOT NULL,
+  to_date TEXT NOT NULL,
+  invoice_id INTEGER NOT NULL REFERENCES invoice(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS invoiced_period_project ON invoiced_period(project, from_date);
 CREATE TRIGGER IF NOT EXISTS invoice_issued_no_update BEFORE UPDATE ON invoice
   WHEN OLD.status = 'issued'
   BEGIN SELECT RAISE(ABORT, 'an issued invoice cannot be changed'); END;
@@ -562,8 +570,10 @@ pub struct FromTime {
 }
 
 /// Build a draft invoice from a project's tracked hours that have not been invoiced yet. An hourly
-/// project becomes one line of hours at its rate; a fixed-fee project becomes one line at the fee.
-/// The entries are marked invoiced so they cannot be billed twice.
+/// project becomes one line of hours at its rate (and needs uninvoiced time). A fixed-fee project
+/// becomes one line at the fee whether or not time was logged; `from` and `to` are then the billed
+/// period, which is recorded so the same fee cannot be billed twice for overlapping periods.
+/// Entries that are uninvoiced in the range are marked invoiced so they cannot be billed twice.
 pub async fn from_time(
     State(st): State<Shared>,
     Extension(actor): Extension<Actor>,
@@ -579,6 +589,11 @@ pub async fn from_time(
             activity: None,
         },
     )?;
+    let projects = crate::load_projects(&conn)?;
+    let project_name = match oas_core::match_project(&projects, &b.project) {
+        oas_core::Match::Exact(i) => projects[i].name.clone(),
+        _ => return Err(ApiError::invalid("unknown project")),
+    };
     let billed: std::collections::HashSet<i64> = conn
         .prepare("SELECT entry_id FROM invoiced_entry")?
         .query_map([], |r| r.get(0))?
@@ -588,14 +603,6 @@ pub async fn from_time(
         .into_iter()
         .filter(|e| !e.running && !billed.contains(&e.id))
         .collect();
-    if open.is_empty() {
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "conflict",
-            "no uninvoiced time for that project in that range",
-        ));
-    }
-    let project_name = open[0].project.clone();
     let (rate_type, rate): (String, Option<i64>) = conn
         .query_row(
             "SELECT rate_type, rate FROM project WHERE name = ?1",
@@ -603,18 +610,40 @@ pub async fn from_time(
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .map_err(|_| ApiError::invalid("unknown project"))?;
-    let first = open
-        .iter()
-        .map(|e| e.date.as_str())
-        .min()
-        .unwrap_or("")
-        .to_string();
-    let last = open
-        .iter()
-        .map(|e| e.date.as_str())
-        .max()
-        .unwrap_or("")
-        .to_string();
+    let fixed = rate_type == "fixed";
+    if open.is_empty() && !fixed {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "conflict",
+            "no uninvoiced time for that project in that range",
+        ));
+    }
+    let mut first = open.iter().map(|e| e.date.as_str()).min().map(String::from);
+    let mut last = open.iter().map(|e| e.date.as_str()).max().map(String::from);
+    let mut period: Option<(String, String)> = None;
+    if fixed {
+        fn given(v: &Option<String>) -> Option<&str> {
+            v.as_deref().map(str::trim).filter(|s| !s.is_empty())
+        }
+        let (pf, pt) = match (given(&b.from), given(&b.to), &first, &last) {
+            (Some(f), Some(t), _, _) => (date(f, "from")?.to_string(), date(t, "to")?.to_string()),
+            (_, _, Some(f), Some(t)) if !open.is_empty() => (f.clone(), t.clone()),
+            _ => {
+                return Err(ApiError::invalid(
+                    "a fixed fee without logged time needs both from and to, the period the fee covers",
+                ));
+            }
+        };
+        if pf > pt {
+            return Err(ApiError::invalid("from must not be after to"));
+        }
+        // The period is what the fee covers, even when the logged time is narrower.
+        first = Some(pf.clone());
+        last = Some(pt.clone());
+        period = Some((pf, pt));
+    }
+    let first = first.unwrap_or_default();
+    let last = last.unwrap_or_default();
     let hours: f64 = open.iter().map(|e| e.hours).sum();
     let line = match (rate_type.as_str(), rate) {
         ("hourly", Some(r)) => LineBody {
@@ -624,7 +653,7 @@ pub async fn from_time(
             unit_price: format_amount(r),
         },
         ("fixed", Some(r)) => LineBody {
-            description: format!("{project_name}: fixed fee, work {first} to {last}"),
+            description: format!("{project_name}: fixed fee, {first} to {last}"),
             quantity: "1".into(),
             unit: Some("st".into()),
             unit_price: format_amount(r),
@@ -635,6 +664,25 @@ pub async fn from_time(
             )));
         }
     };
+    if let Some((pf, pt)) = &period {
+        let clash: Option<(String, String, i64)> = conn
+            .query_row(
+                "SELECT from_date, to_date, invoice_id FROM invoiced_period
+                 WHERE project = ?1 AND from_date <= ?3 AND to_date >= ?2 LIMIT 1",
+                params![project_name, pf, pt],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .ok();
+        if let Some((cf, ct, inv)) = clash {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "conflict",
+                format!(
+                    "the fixed fee for {project_name} is already on invoice {inv} for {cf} to {ct}, which overlaps {pf} to {pt}; delete that draft or choose a later period"
+                ),
+            ));
+        }
+    }
     let ids: Vec<i64> = open.iter().map(|e| e.id).collect();
     let new = NewInvoice {
         customer_id: b.customer_id,
@@ -651,6 +699,12 @@ pub async fn from_time(
     };
     let tx = conn.transaction()?;
     let id = insert_invoice(&tx, &actor, &new, &ids)?;
+    if let Some((pf, pt)) = &period {
+        tx.execute(
+            "INSERT INTO invoiced_period(project, from_date, to_date, invoice_id) VALUES (?1, ?2, ?3, ?4)",
+            params![project_name, pf, pt, id],
+        )?;
+    }
     tx.commit()?;
     Ok(Json(json!({"invoice": invoice_json(&conn, id)?})))
 }

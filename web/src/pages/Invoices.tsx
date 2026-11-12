@@ -157,6 +157,11 @@ function NewInvoice({
   const [quantity, setQuantity] = useState("1");
   const [unitPrice, setUnitPrice] = useState("");
   const priced = projects.filter((p) => !p.archived && p.rate_type !== "none");
+  const selected = priced.find((p) => p.name === project);
+  const fixedHint =
+    from && to
+      ? `Fixed fee, billed once for ${from} to ${to}, with or without logged time. The same period cannot be billed twice.`
+      : "Fixed fee: choose From and To, the period the fee covers. It is billed once, with or without logged time.";
 
   async function save() {
     try {
@@ -187,7 +192,10 @@ function NewInvoice({
     }
   }
 
-  const ready = customer && (mode === "time" ? project : description.trim() && unitPrice.trim());
+  const needsPeriod = selected?.rate_type === "fixed" && !(from && to);
+  const ready =
+    customer &&
+    (mode === "time" ? project && !needsPeriod : description.trim() && unitPrice.trim());
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -228,7 +236,14 @@ function NewInvoice({
                 </TabsList>
                 <TabsContent value="time">
                   <div className="oas-form" style={{ marginTop: ".75rem" }}>
-                    <Field label="Project" hint="Only projects with an hourly rate or fixed fee">
+                    <Field
+                      label="Project"
+                      hint={
+                        selected?.rate_type === "fixed"
+                          ? fixedHint
+                          : "Hourly projects bill logged hours. A fixed fee can be billed without logged time."
+                      }
+                    >
                       <Select value={project} onValueChange={setProject}>
                         <SelectTrigger>
                           <SelectValue placeholder="Choose a project" />
