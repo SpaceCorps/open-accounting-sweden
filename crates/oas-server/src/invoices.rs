@@ -940,6 +940,25 @@ fn esc(s: &str) -> String {
         .replace('\'', "&#39;")
 }
 
+/// The seller's payment text as a stacked block: one item per line, split at line breaks and at the
+/// " · " that older texts use between items, under a small heading. Empty text gives no block.
+fn payment_block(s: &str) -> String {
+    let items: Vec<String> = s
+        .lines()
+        .flat_map(|l| l.split(" \u{b7} "))
+        .map(str::trim)
+        .filter(|x| !x.is_empty())
+        .map(esc)
+        .collect();
+    if items.is_empty() {
+        return String::new();
+    }
+    format!(
+        "<div class=pay><strong>Payment details</strong><br>{}</div>",
+        items.join("<br>")
+    )
+}
+
 fn multiline(s: &str) -> String {
     esc(s).replace('\n', "<br>")
 }
@@ -982,13 +1001,13 @@ body{{font:14px/1.5 system-ui,sans-serif;margin:0;color:#111;background:#fff}}ma
 h1{{font-size:1.6rem;margin:0}}.row{{display:flex;justify-content:space-between;gap:2rem;margin:1.5rem 0}}.muted{{color:#555}}
 table{{width:100%;border-collapse:collapse;margin:1.5rem 0}}th,td{{padding:.5rem .4rem;border-bottom:1px solid #ddd;text-align:left}}.n{{text-align:right;white-space:nowrap}}
 .tot{{margin-left:auto;width:16rem}}.tot div{{display:flex;justify-content:space-between;padding:.2rem 0}}.tot .g{{font-weight:700;border-top:2px solid #111;margin-top:.3rem;padding-top:.4rem}}
-.wm{{position:absolute;top:30%;left:10%;font-size:6rem;color:rgba(200,0,0,.12);transform:rotate(-20deg);pointer-events:none}}
+.pay{{margin:1.5rem 0;padding:.75rem 1rem;border:1px solid #ddd;border-radius:6px;color:#333;line-height:1.7}}.wm{{position:absolute;top:30%;left:10%;font-size:6rem;color:rgba(200,0,0,.12);transform:rotate(-20deg);pointer-events:none}}
 @media print{{main{{margin:0}}}}</style></head><body><main>{wm}
 <div class=row><div><h1>Invoice {label}</h1><div class=muted>Faktura</div></div><div style=\"text-align:right\"><div>Invoice date: {issue}</div><div>Due date: {due}</div>{service}</div></div>
 <div class=row><div><strong>{sname}</strong><br>{saddr}<br>Org no: {sorg}<br>VAT no: {svat}{fskatt}</div><div><strong>{cname}</strong><br>{caddr}{cvat}</div></div>
 <table><thead><tr><th>Description</th><th class=n>Quantity</th><th class=n>Unit price ({cur})</th><th class=n>Amount ({cur})</th></tr></thead><tbody>{rows}</tbody></table>
 <div class=tot><div><span>Total excl. VAT</span><span>{net}</span></div><div><span>VAT {rate}%</span><span>{vat}</span></div><div class=g><span>To pay ({cur})</span><span>{gross}</span></div></div>
-<p class=muted>{pay}</p><p class=muted>{notes}</p></main></body></html>",
+{pay}<p class=muted>{notes}</p></main></body></html>",
         label = esc(&label),
         wm = if draft { "<div class=wm>DRAFT</div>" } else { "" },
         issue = esc(inv["issue_date"].as_str().unwrap_or("")),
@@ -1008,7 +1027,7 @@ table{{width:100%;border-collapse:collapse;margin:1.5rem 0}}th,td{{padding:.5rem
         rate = inv["vat_rate"],
         vat = esc(inv["totals"]["vat"].as_str().unwrap_or("")),
         gross = esc(inv["totals"]["gross"].as_str().unwrap_or("")),
-        pay = multiline(&s.payment),
+        pay = payment_block(&s.payment),
         notes = multiline(inv["notes"].as_str().unwrap_or("")),
     );
     let mut res = html.into_response();
@@ -1023,4 +1042,29 @@ table{{width:100%;border-collapse:collapse;margin:1.5rem 0}}th,td{{padding:.5rem
         HeaderValue::from_static("default-src 'none'; style-src 'unsafe-inline'"),
     );
     Ok(res)
+}
+
+#[cfg(test)]
+mod payment_block_tests {
+    use super::payment_block;
+
+    #[test]
+    fn items_stack_one_per_line_under_a_heading() {
+        let one_line = "IBAN SE22 9710 \u{b7} BIC LUNADK2B \u{b7} Account 9710-37 303 60";
+        let html = payment_block(one_line);
+        assert_eq!(
+            html,
+            "<div class=pay><strong>Payment details</strong><br>IBAN SE22 9710<br>BIC LUNADK2B<br>Account 9710-37 303 60</div>"
+        );
+        assert_eq!(
+            payment_block("Bankgiro 123-4567\n\nIBAN SE22"),
+            "<div class=pay><strong>Payment details</strong><br>Bankgiro 123-4567<br>IBAN SE22</div>"
+        );
+    }
+
+    #[test]
+    fn empty_text_and_markup_are_handled() {
+        assert_eq!(payment_block("  \n "), "");
+        assert!(payment_block("<b>x</b>").contains("&lt;b&gt;x&lt;/b&gt;"));
+    }
 }
