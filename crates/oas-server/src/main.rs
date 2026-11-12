@@ -2179,6 +2179,146 @@ mod tests {
         );
     }
 
+    async fn fee_setup(rate_type: &str) -> (Router, i64) {
+        let app = app();
+        let project = if rate_type == "fixed" {
+            json!({"name": "RioRec", "rate_type": "fixed", "rate": "20000"})
+        } else {
+            json!({"name": "RioRec", "rate_type": "hourly", "rate": "900"})
+        };
+        assert_eq!(
+            call(&app, Some(ADMIN), "POST", "/api/projects", Some(project))
+                .await
+                .0,
+            200
+        );
+        let (_, customer) = call(
+            &app,
+            Some(ADMIN),
+            "POST",
+            "/api/customers",
+            Some(json!({"name": "Kund AB", "address": "Gatan 1"})),
+        )
+        .await;
+        let cid = customer["customer"]["id"].as_i64().expect("customer id");
+        (app, cid)
+    }
+
+    async fn bill(app: &Router, cid: i64, from: Option<&str>, to: Option<&str>) -> (u16, Value) {
+        let body = json!({"customer_id": cid, "project": "RioRec", "from": from, "to": to});
+        call(
+            app,
+            Some(ADMIN),
+            "POST",
+            "/api/invoices/from-time",
+            Some(body),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_fixed_fee_is_billed_without_logged_time_and_records_its_period() {
+        let (app, cid) = fee_setup("fixed").await;
+        let (status, body) = bill(&app, cid, Some("2026-10-01"), Some("2026-10-31")).await;
+        assert_eq!(status, 200, "{body}");
+        let lines = body["invoice"]["lines"].as_array().unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["quantity"], "1.00");
+        assert_eq!(lines[0]["unit"], "st");
+        assert_eq!(lines[0]["unit_price"], "20000.00");
+        let d = lines[0]["description"].as_str().unwrap();
+        assert!(
+            d.contains("RioRec") && d.contains("2026-10-01 to 2026-10-31"),
+            "{d}"
+        );
+        assert_eq!(body["invoice"]["time_entries"], 0);
+    }
+
+    #[tokio::test]
+    async fn a_fixed_fee_without_time_needs_a_period() {
+        let (app, cid) = fee_setup("fixed").await;
+        let (status, body) = bill(&app, cid, None, None).await;
+        assert_eq!(status, 400, "{body}");
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("from and to")
+        );
+    }
+
+    #[tokio::test]
+    async fn an_overlapping_fixed_fee_period_is_refused_until_the_draft_is_deleted() {
+        let (app, cid) = fee_setup("fixed").await;
+        let (status, first) = bill(&app, cid, Some("2026-10-01"), Some("2026-10-31")).await;
+        assert_eq!(status, 200, "{first}");
+        let (status, err) = bill(&app, cid, Some("2026-10-15"), Some("2026-11-15")).await;
+        assert_eq!(status, 409, "{err}");
+        assert!(
+            err["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("already on invoice")
+        );
+        // The next month does not overlap.
+        assert_eq!(
+            bill(&app, cid, Some("2026-11-01"), Some("2026-11-30"))
+                .await
+                .0,
+            200
+        );
+        let id = first["invoice"]["id"].as_i64().unwrap();
+        assert_eq!(
+            call(
+                &app,
+                Some(ADMIN),
+                "POST",
+                &format!("/api/invoices/{id}/delete"),
+                None
+            )
+            .await
+            .0,
+            200
+        );
+        assert_eq!(
+            bill(&app, cid, Some("2026-10-15"), Some("2026-10-20"))
+                .await
+                .0,
+            200
+        );
+    }
+
+    #[tokio::test]
+    async fn an_hourly_project_without_time_is_still_refused() {
+        let (app, cid) = fee_setup("hourly").await;
+        let (status, body) = bill(&app, cid, Some("2026-10-01"), Some("2026-10-31")).await;
+        assert_eq!(status, 409, "{body}");
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("no uninvoiced time")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_fixed_fee_with_time_marks_the_entries_and_stays_one_line() {
+        let (app, cid) = fee_setup("fixed").await;
+        for d in ["2026-10-05", "2026-10-06"] {
+            assert_eq!(
+                log(&app, ADMIN, entry("RioRec", d, "09:00", "11:00"))
+                    .await
+                    .0,
+                200
+            );
+        }
+        let (status, body) = bill(&app, cid, Some("2026-10-01"), Some("2026-10-31")).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["invoice"]["lines"].as_array().unwrap().len(), 1);
+        assert_eq!(body["invoice"]["lines"][0]["unit_price"], "20000.00");
+        assert_eq!(body["invoice"]["time_entries"], 2);
+    }
+
     #[tokio::test]
     async fn a_fixed_cost_line_can_be_added_to_a_draft_but_not_an_issued_invoice() {
         let app = app();
