@@ -1372,7 +1372,7 @@ pub async fn invoice_html(
 body{{font:13px/1.4 Helvetica,Arial,sans-serif;margin:0;color:#000;background:#eee}}
 .page{{width:210mm;min-height:297mm;box-sizing:border-box;margin:0 auto;background:#fff;padding:12mm 16mm 8mm;position:relative}}
 .top{{display:flex;min-height:52mm}}.top>div{{flex:1}}.logo{{font-size:26px;font-weight:700;line-height:1.05;color:#4d4d33;text-transform:uppercase;padding-top:4mm}}
-h1{{font-size:17px;margin:2mm 0 0}}.cust{{margin-top:14mm}}.cust small{{display:block;font-size:6.5px;margin-bottom:2mm}}.cust div{{font-size:13.5px;line-height:1.5}}
+h1{{font-size:17px;margin:2mm 0 0}}.cust{{margin-top:14mm}}.cust small{{display:block;font-size:11px;color:#555;margin-bottom:1.5mm}}.cust div{{font-size:13.5px;line-height:1.5}}
 .meta{{display:flex;gap:4mm;margin:0 0 8mm;padding-left:4mm}}.meta>div{{flex:1}}.kv{{display:flex;padding:.4mm 0}}.kv span:first-child{{width:38mm;flex:none}}.kv span{{white-space:nowrap}}
 .pl{{padding:.4mm 0}}
 .box{{border:1px solid #666;display:flex;flex-direction:column;min-height:128mm;padding:0 0 6mm}}
