@@ -79,6 +79,10 @@ CREATE TABLE IF NOT EXISTS invoiced_period(
   invoice_id INTEGER NOT NULL REFERENCES invoice(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS invoiced_period_project ON invoiced_period(project, from_date);
+CREATE TABLE IF NOT EXISTS invoice_credit(
+  credit_id INTEGER PRIMARY KEY REFERENCES invoice(id) ON DELETE CASCADE,
+  original_id INTEGER NOT NULL UNIQUE REFERENCES invoice(id)
+);
 CREATE TRIGGER IF NOT EXISTS invoice_issued_no_update BEFORE UPDATE ON invoice
   WHEN OLD.status = 'issued'
   BEGIN SELECT RAISE(ABORT, 'an issued invoice cannot be changed'); END;
@@ -764,6 +768,38 @@ fn invoice_json(conn: &Connection, id: i64) -> Result<Value, ApiError> {
         .filter_map(Result::ok)
         .collect();
     let t = totals(&lines, vat_rate);
+    // A credit note stores positive lines and shows them negated, so it reverses its original.
+    let credit_of: Option<i64> = conn
+        .query_row(
+            "SELECT original_id FROM invoice_credit WHERE credit_id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .ok();
+    let credited_by: Option<i64> = conn
+        .query_row(
+            "SELECT credit_id FROM invoice_credit WHERE original_id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .ok();
+    let label_of = |other: Option<i64>| -> Option<String> {
+        other.and_then(|o| {
+            conn.query_row(
+                "SELECT series || number FROM invoice WHERE id = ?1 AND number IS NOT NULL",
+                params![o],
+                |r| r.get(0),
+            )
+            .ok()
+        })
+    };
+    let credit_of_label = label_of(credit_of);
+    let sg: i64 = if credit_of.is_some() { -1 } else { 1 };
+    let t = Totals {
+        net: sg * t.net,
+        vat: sg * t.vat,
+        gross: sg * t.gross,
+    };
     let entries: i64 = conn.query_row(
         "SELECT COUNT(*) FROM invoiced_entry WHERE invoice_id = ?1",
         params![id],
@@ -776,9 +812,10 @@ fn invoice_json(conn: &Connection, id: i64) -> Result<Value, ApiError> {
         "issue_date": issue, "due_date": due, "service_date": service, "currency": currency,
         "vat_rate": vat_rate, "notes": notes, "created_by": created_by, "issued_by": issued_by, "issued_at": issued_at,
         "ledger_draft_id": draft, "time_entries": entries,
+        "credit_of": credit_of, "credit_of_label": credit_of_label, "credited_by": credited_by,
         "lines": lines.iter().zip(&line_ids).map(|((d, q, u, p), lid)| json!({
-            "id": lid, "description": d, "quantity": format_amount(*q), "unit": u, "unit_price": format_amount(*p),
-            "net": format_amount(line_net(*q, *p)),
+            "id": lid, "description": d, "quantity": format_amount(sg * *q), "unit": u, "unit_price": format_amount(*p),
+            "net": format_amount(sg * line_net(*q, *p)),
         })).collect::<Vec<_>>(),
         "totals": {"net": format_amount(t.net), "vat": format_amount(t.vat), "gross": format_amount(t.gross)},
     }))
@@ -906,11 +943,11 @@ pub async fn issue_invoice(
 ) -> ApiResult {
     require_admin(&actor)?;
     let mut conn = st.conn.lock().unwrap();
-    let (status, vat_rate, issue_date, customer_id): (String, i64, String, i64) = conn
-        .query_row(
-            "SELECT status, vat_rate, issue_date, customer_id FROM invoice WHERE id = ?1",
+    let (status, vat_rate, issue_date, customer_id, series): (String, i64, String, i64, String) =
+        conn.query_row(
+            "SELECT status, vat_rate, issue_date, customer_id, series FROM invoice WHERE id = ?1",
             params![id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         )
         .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such invoice"))?;
     if status != "draft" {
@@ -944,31 +981,57 @@ pub async fn issue_invoice(
         _ => (3043, 2631, "S6"),
     };
     let number: i64 = conn.query_row(
-        "SELECT COALESCE(MAX(number), 0) + 1 FROM invoice WHERE series = 'F'",
-        [],
+        "SELECT COALESCE(MAX(number), 0) + 1 FROM invoice WHERE series = ?1",
+        params![series],
         |r| r.get(0),
     )?;
+    let credit_of: Option<i64> = conn
+        .query_row(
+            "SELECT original_id FROM invoice_credit WHERE credit_id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .ok();
+    let is_credit = credit_of.is_some();
+    // A credit note posts the reverse of an invoice: receivable credited, sales and VAT debited.
+    let side = |ore: i64, debit: bool| -> (Option<String>, Option<String>) {
+        if debit {
+            (Some(format_amount(ore)), None)
+        } else {
+            (None, Some(format_amount(ore)))
+        }
+    };
+    let (gd, gc) = side(t.gross, !is_credit);
+    let (nd_, nc) = side(t.net, is_credit);
+    let (vd, vc) = side(t.vat, is_credit);
     let nd = NewDraft {
         event_date: issue_date,
-        description: format!("Faktura F{number} {customer}"),
+        description: format!(
+            "{} {series}{number} {customer}",
+            if is_credit {
+                "Kreditfaktura"
+            } else {
+                "Faktura"
+            }
+        ),
         counterparty: Some(customer),
         lines: vec![
             LineIn {
                 account: 1510,
-                debit: Some(format_amount(t.gross)),
-                credit: None,
+                debit: gd,
+                credit: gc,
                 vat_code: None,
             },
             LineIn {
                 account: income,
-                debit: None,
-                credit: Some(format_amount(t.net)),
+                debit: nd_,
+                credit: nc,
                 vat_code: Some(code.into()),
             },
             LineIn {
                 account: vat_acct,
-                debit: None,
-                credit: Some(format_amount(t.vat)),
+                debit: vd,
+                credit: vc,
                 vat_code: None,
             },
         ],
@@ -987,16 +1050,94 @@ pub async fn issue_invoice(
         "UPDATE invoice SET status = 'issued', number = ?1, issued_by = ?2, issued_at = ?3, ledger_draft_id = ?4 WHERE id = ?5",
         params![number, actor.name, utc_string(Utc::now()), draft_id, id],
     )?;
+    if let Some(orig) = credit_of {
+        // The credited invoice no longer bills its time or period, so both can be billed again.
+        conn.execute(
+            "DELETE FROM invoiced_entry WHERE invoice_id = ?1",
+            params![orig],
+        )?;
+        conn.execute(
+            "DELETE FROM invoiced_period WHERE invoice_id = ?1",
+            params![orig],
+        )?;
+    }
     ledger::audit(
         &conn,
         &actor,
         "invoice.issue",
         &id.to_string(),
-        &format!("F{number}"),
+        &format!("{series}{number}"),
     )?;
     Ok(Json(
         json!({"invoice": invoice_json(&conn, id)?, "ledger_draft": ledger::draft_view(&conn, draft_id)?}),
     ))
+}
+
+/// Cancel an issued invoice by crediting it: a draft credit note (series K) with the same lines,
+/// shown negated. Issuing it posts the reverse voucher and releases the time and fee period of the
+/// credited invoice, so they can be invoiced again. One credit note per invoice.
+pub async fn credit_invoice(
+    State(st): State<Shared>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<i64>,
+) -> ApiResult {
+    require_admin(&actor)?;
+    let mut conn = st.conn.lock().unwrap();
+    let (status, series, number, customer_id, vat_rate): (String, String, Option<i64>, i64, i64) =
+        conn.query_row(
+            "SELECT status, series, number, customer_id, vat_rate FROM invoice WHERE id = ?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such invoice"))?;
+    let conflict = |m: &str| ApiError::new(StatusCode::CONFLICT, "conflict", m.to_string());
+    if status != "issued" {
+        return Err(conflict("only an issued invoice can be credited"));
+    }
+    let is_credit: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM invoice_credit WHERE credit_id = ?1",
+        params![id],
+        |r| r.get(0),
+    )?;
+    if is_credit > 0 {
+        return Err(conflict("a credit note cannot be credited"));
+    }
+    let existing: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM invoice_credit WHERE original_id = ?1",
+        params![id],
+        |r| r.get(0),
+    )?;
+    if existing > 0 {
+        return Err(conflict("this invoice already has a credit note"));
+    }
+    let label = format!("{series}{}", number.unwrap_or_default());
+    let today = Utc::now().date_naive().to_string();
+    let tx = conn.transaction()?;
+    tx.execute(
+        "INSERT INTO invoice(series, customer_id, issue_date, due_date, vat_rate, notes, created_by, created_at)
+         VALUES ('K', ?1, ?2, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            customer_id,
+            today,
+            vat_rate,
+            format!("Kreditfaktura avseende faktura {label}"),
+            actor.name,
+            utc_string(Utc::now())
+        ],
+    )?;
+    let cid = tx.last_insert_rowid();
+    tx.execute(
+        "INSERT INTO invoice_line(invoice_id, description, quantity, unit, unit_price)
+         SELECT ?1, description, quantity, unit, unit_price FROM invoice_line WHERE invoice_id = ?2 ORDER BY id",
+        params![cid, id],
+    )?;
+    tx.execute(
+        "INSERT INTO invoice_credit(credit_id, original_id) VALUES (?1, ?2)",
+        params![cid, id],
+    )?;
+    ledger::audit(&tx, &actor, "invoice.credit", &id.to_string(), &label)?;
+    tx.commit()?;
+    Ok(Json(json!({"invoice": invoice_json(&conn, cid)?})))
 }
 
 fn esc(s: &str) -> String {
@@ -1060,7 +1201,9 @@ pub async fn invoice_html(
         chrono::NaiveDate::parse_from_str(issue_s, "%Y-%m-%d"),
         chrono::NaiveDate::parse_from_str(due_s, "%Y-%m-%d"),
     ) {
-        (Ok(i), Ok(d)) => format!("{} dagar netto", (d - i).num_days()),
+        (Ok(i), Ok(d)) if inv["credit_of"].is_null() => {
+            format!("{} dagar netto", (d - i).num_days())
+        }
         _ => String::new(),
     };
     let html = format!(
@@ -1074,7 +1217,7 @@ table{{width:100%;border-collapse:collapse;margin:1.5rem 0 1rem}}th{{text-align:
 .small{{margin-top:2rem;font-size:12px}}.foot{{position:absolute;bottom:0;left:0;right:0;text-align:center;font-size:11px;color:#333;border-top:1px solid #ccc;padding:.5rem 1.5rem}}.muted{{color:#555}}
 .wm{{position:absolute;top:30%;left:10%;font-size:6rem;color:rgba(200,0,0,.12);transform:rotate(-20deg);pointer-events:none}}
 @media print{{main{{margin:0}}}}</style></head><body><main>{wm}
-<h1>FAKTURA</h1>
+<h1>{title}</h1>
 <div class=addr><b>Kundadress</b>{cname}<br>{caddr}{cvat}</div>
 <div class=meta><div>
 <div class=kv><span>Faktura nr.:</span><span>{label}</span></div>
@@ -1093,6 +1236,7 @@ table{{width:100%;border-collapse:collapse;margin:1.5rem 0 1rem}}th{{text-align:
 <p class=small>Efter förfallodag debiteras dröjsmålsränta enligt räntelagen<br>Eventuella invändningar mot denna faktura skall ske inom 10 dagar</p>
 <p class=muted>{notes}</p>
 <div class=foot>{sname} * {saddr_line}</div></main></body></html>",
+        title = if inv["credit_of"].is_null() { "FAKTURA" } else { "KREDITFAKTURA" },
         label = esc(&label),
         wm = if draft { "<div class=wm>UTKAST</div>" } else { "" },
         issue = esc(&short(issue_s)),
