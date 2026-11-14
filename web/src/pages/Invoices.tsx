@@ -21,7 +21,7 @@ import {
   type DataTableColumn,
   type DataTableRowAction,
 } from "@spacecorps/components/ui";
-import { Check, Eye, FileText, Pencil, Plus, Trash2 } from "lucide-react";
+import { Check, Eye, FileText, Pencil, Plus, Trash2, Undo2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, openInvoicePage, type Customer, type Invoice, type Me, type Project } from "../api";
 import { useData } from "../hooks";
@@ -461,7 +461,7 @@ export function InvoicesPage({ me }: { me: Me }) {
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
   const [deleteCustomer, setDeleteCustomer] = useState<Customer | null>(null);
   const [viewingId, setViewingId] = useState<number | null>(null);
-  const [confirm, setConfirm] = useState<{ inv: Invoice; what: "issue" | "delete" } | null>(null);
+  const [confirm, setConfirm] = useState<{ inv: Invoice; what: "issue" | "delete" | "credit" } | null>(null);
 
   const reload = () => {
     invoices.reload();
@@ -471,7 +471,7 @@ export function InvoicesPage({ me }: { me: Me }) {
   const list = invoices.data?.invoices ?? [];
   const viewing = list.find((i) => i.id === viewingId) ?? null;
 
-  async function act(inv: Invoice, what: "issue" | "delete") {
+  async function act(inv: Invoice, what: "issue" | "delete" | "credit") {
     setConfirm(null);
     try {
       const res = await api<{ invoice: Invoice }>(`/invoices/${inv.id}/${what}`, {
@@ -482,6 +482,8 @@ export function InvoicesPage({ me }: { me: Me }) {
           `Issued ${res.invoice.label}`,
           "A draft voucher was proposed in the ledger. Approve it there.",
         );
+      else if (what === "credit")
+        notifyOk("Credit note drafted", "Issue it to reverse the invoice and free its hours.");
       else notifyOk("Draft deleted");
       reload();
     } catch (e) {
@@ -537,6 +539,16 @@ export function InvoicesPage({ me }: { me: Me }) {
             icon: <Trash2 aria-hidden="true" />,
             tooltip: "Delete draft",
             variant: "destructive" as const,
+          },
+        ]
+      : []),
+    ...(i.status === "issued" && me.can_approve && !i.credit_of && !i.credited_by
+      ? [
+          {
+            tag: "credit",
+            label: "Credit",
+            icon: <Undo2 aria-hidden="true" />,
+            tooltip: "Draft a credit note that reverses this invoice",
           },
         ]
       : []),
@@ -622,7 +634,7 @@ export function InvoicesPage({ me }: { me: Me }) {
                 onRowAction={({ tag, row }) =>
                   tag === "view"
                     ? setViewingId(row.id)
-                    : setConfirm({ inv: row, what: tag as "issue" | "delete" })
+                    : setConfirm({ inv: row, what: tag as "issue" | "delete" | "credit" })
                 }
                 onRowClick={(row) => setViewingId(row.id)}
                 defaultSort={{ column: "label", direction: "Descending" }}
@@ -675,13 +687,23 @@ export function InvoicesPage({ me }: { me: Me }) {
       <ViewInvoice invoice={viewing} onClose={() => setViewingId(null)} onChanged={reload} />
       <ConfirmDialog
         open={confirm !== null}
-        title={confirm?.what === "issue" ? "Issue this invoice?" : "Delete this draft?"}
+        title={
+          confirm?.what === "issue"
+            ? "Issue this invoice?"
+            : confirm?.what === "credit"
+              ? "Credit this invoice?"
+              : "Delete this draft?"
+        }
         description={
           confirm?.what === "issue"
             ? "It gets the next invoice number and can no longer be changed or deleted. A draft voucher is proposed in the ledger."
-            : "The draft is removed and its tracked hours can be invoiced again."
+            : confirm?.what === "credit"
+              ? "A draft credit note with the same lines, shown as negative, is created. Issuing it reverses this invoice and frees its hours."
+              : "The draft is removed and its tracked hours can be invoiced again."
         }
-        confirmLabel={confirm?.what === "issue" ? "Issue" : "Delete"}
+        confirmLabel={
+          confirm?.what === "issue" ? "Issue" : confirm?.what === "credit" ? "Create credit note" : "Delete"
+        }
         onConfirm={() => confirm && void act(confirm.inv, confirm.what)}
         onCancel={() => setConfirm(null)}
       />

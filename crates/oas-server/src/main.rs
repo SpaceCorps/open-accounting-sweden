@@ -1225,7 +1225,7 @@ async fn income(State(st): State<Shared>, Query(q): Query<IncomeQuery>) -> ApiRe
     // Invoices that are not built from tracked time, by invoice date, excluding VAT.
     let other: i64 = conn
         .query_row(
-            "SELECT COALESCE(SUM((l.quantity * l.unit_price + 50) / 100), 0)
+            "SELECT COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM invoice_credit k WHERE k.credit_id = i.id) THEN -1 ELSE 1 END * ((l.quantity * l.unit_price + 50) / 100)), 0)
              FROM invoice_line l JOIN invoice i ON i.id = l.invoice_id
              WHERE i.issue_date >= ?1 AND i.issue_date <= ?2 AND i.currency = 'SEK'
                AND NOT EXISTS (SELECT 1 FROM invoiced_entry x WHERE x.invoice_id = i.id)",
@@ -1235,7 +1235,7 @@ async fn income(State(st): State<Shared>, Query(q): Query<IncomeQuery>) -> ApiRe
         .unwrap_or(0);
     let issued_net: i64 = conn
         .query_row(
-            "SELECT COALESCE(SUM((l.quantity * l.unit_price + 50) / 100), 0)
+            "SELECT COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM invoice_credit k WHERE k.credit_id = i.id) THEN -1 ELSE 1 END * ((l.quantity * l.unit_price + 50) / 100)), 0)
              FROM invoice_line l JOIN invoice i ON i.id = l.invoice_id
              WHERE i.status = 'issued' AND i.issue_date >= ?1 AND i.issue_date <= ?2 AND i.currency = 'SEK'",
             params![from_s, to_s],
@@ -1487,6 +1487,7 @@ fn router(state: Shared, web_dir: Option<&str>) -> Router {
             post(invoices::remove_line),
         )
         .route("/invoices/{id}/issue", post(invoices::issue_invoice))
+        .route("/invoices/{id}/credit", post(invoices::credit_invoice))
         .route("/invoices/{id}/delete", post(invoices::delete_invoice))
         .route("/invoices/{id}/html", get(invoices::invoice_html))
         .route("/matches", get(inbox::list_matches))
@@ -2375,6 +2376,68 @@ mod tests {
         )
         .await;
         assert_eq!(status, 400);
+    }
+
+    #[tokio::test]
+    async fn a_credit_note_reverses_an_invoice_and_frees_its_fee_period() {
+        let (app, cid) = fee_setup("fixed").await;
+        let company =
+            json!({"name": "Bolaget AB", "org_number": "5590000000", "address": "Vägen 2"});
+        assert_eq!(
+            call(&app, Some(ADMIN), "POST", "/api/company", Some(company))
+                .await
+                .0,
+            200
+        );
+        let (_, inv) = bill(&app, cid, Some("2026-10-01"), Some("2026-10-31")).await;
+        let id = inv["invoice"]["id"].as_i64().unwrap();
+        let post = |path: String| {
+            let app = app.clone();
+            async move { call(&app, Some(ADMIN), "POST", &path, None).await }
+        };
+        // A draft cannot be credited.
+        assert_eq!(post(format!("/api/invoices/{id}/credit")).await.0, 409);
+        assert_eq!(post(format!("/api/invoices/{id}/issue")).await.0, 200);
+        // The period is held while the invoice stands.
+        assert_eq!(
+            bill(&app, cid, Some("2026-10-01"), Some("2026-10-31"))
+                .await
+                .0,
+            409
+        );
+        let (status, credit) = post(format!("/api/invoices/{id}/credit")).await;
+        assert_eq!(status, 200, "{credit}");
+        let cid2 = credit["invoice"]["id"].as_i64().unwrap();
+        assert_eq!(credit["invoice"]["status"], "draft");
+        assert_eq!(credit["invoice"]["totals"]["net"], "-20000.00");
+        assert_eq!(credit["invoice"]["lines"][0]["quantity"], "-1.00");
+        // Only one credit note per invoice.
+        assert_eq!(post(format!("/api/invoices/{id}/credit")).await.0, 409);
+        let (status, issued) = post(format!("/api/invoices/{cid2}/issue")).await;
+        assert_eq!(status, 200, "{issued}");
+        assert_eq!(issued["invoice"]["label"], "K1");
+        let lines = issued["ledger_draft"]["lines"].as_array().unwrap();
+        let line = |acct: i64| lines.iter().find(|l| l["account"] == acct).unwrap().clone();
+        assert_eq!(line(1510)["credit"], "25000.00");
+        assert_eq!(line(3041)["debit"], "20000.00");
+        assert_eq!(line(2611)["debit"], "5000.00");
+        // A credit note cannot be credited, and the period is free again.
+        assert_eq!(post(format!("/api/invoices/{cid2}/credit")).await.0, 409);
+        assert_eq!(
+            bill(&app, cid, Some("2026-10-01"), Some("2026-10-31"))
+                .await
+                .0,
+            200
+        );
+        let (_, orig) = call(
+            &app,
+            Some(ADMIN),
+            "GET",
+            &format!("/api/invoices/{id}"),
+            None,
+        )
+        .await;
+        assert_eq!(orig["invoice"]["credited_by"], cid2);
     }
 
     #[tokio::test]

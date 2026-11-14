@@ -260,6 +260,9 @@ export interface Invoice {
   totals: { net: string; vat: string; gross: string };
   ledger_draft_id: number | null;
   time_entries: number;
+  credit_of: number | null;
+  credit_of_label: string | null;
+  credited_by: number | null;
 }
 
 /**
