@@ -333,6 +333,7 @@ function ViewInvoice({
   const [description, setDescription] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [unitPrice, setUnitPrice] = useState("");
+  const [printLang, setPrintLang] = useState<"sv" | "en">("sv");
   const draft = invoice?.status === "draft";
   const cols: DataTableColumn<Invoice["lines"][number]>[] = [
     { name: "description", header: "Description", wrapText: true },
@@ -438,9 +439,18 @@ function ViewInvoice({
               ) : null}
             </DialogBody>
             <DialogFooter>
+              <Select value={printLang} onValueChange={(v) => setPrintLang(v as "sv" | "en")}>
+                <SelectTrigger aria-label="Invoice language" style={{ width: "9rem" }}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sv">Svenska</SelectItem>
+                  <SelectItem value="en">English</SelectItem>
+                </SelectContent>
+              </Select>
               <Button
                 variant="outline"
-                onClick={() => void openInvoicePage(invoice.id).catch(notifyError)}
+                onClick={() => void openInvoicePage(invoice.id, printLang).catch(notifyError)}
               >
                 <FileText /> Open printable invoice
               </Button>
