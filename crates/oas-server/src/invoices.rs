@@ -1140,6 +1140,33 @@ pub async fn credit_invoice(
     Ok(Json(json!({"invoice": invoice_json(&conn, cid)?})))
 }
 
+/// "72000.00" as "72 000,00": spaces between thousands and a decimal comma, as on Swedish invoices.
+fn sv(s: &str) -> String {
+    let (neg, rest) = match s.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, s),
+    };
+    let (int, frac) = rest.split_once('.').unwrap_or((rest, "00"));
+    let mut out = String::new();
+    for (i, c) in int.chars().enumerate() {
+        if i > 0 && (int.len() - i) % 3 == 0 {
+            out.push('\u{a0}');
+        }
+        out.push(c);
+    }
+    format!("{}{out},{frac}", if neg { "-" } else { "" })
+}
+
+/// A quantity without decimals when it is whole.
+fn sv_qty(s: &str) -> String {
+    match s.strip_suffix(".00") {
+        Some(whole) => sv(&format!("{whole}.00"))
+            .trim_end_matches(",00")
+            .to_string(),
+        None => sv(s),
+    }
+}
+
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -1188,10 +1215,10 @@ pub async fn invoice_html(
         rows.push_str(&format!(
             "<tr><td>{}</td><td class=n>{}</td><td>{}</td><td class=n>{}</td><td class=n>{}</td></tr>",
             esc(l["description"].as_str().unwrap_or("")),
-            esc(l["quantity"].as_str().unwrap_or("")),
+            esc(&sv_qty(l["quantity"].as_str().unwrap_or(""))),
             esc(l["unit"].as_str().unwrap_or("")),
-            esc(l["unit_price"].as_str().unwrap_or("")),
-            esc(l["net"].as_str().unwrap_or("")),
+            esc(&sv(l["unit_price"].as_str().unwrap_or(""))),
+            esc(&sv(l["net"].as_str().unwrap_or(""))),
         ));
     }
     let short = |d: &str| d.get(2..).unwrap_or(d).to_string();
@@ -1252,10 +1279,10 @@ table{{width:100%;border-collapse:collapse;margin:1.5rem 0 1rem}}th{{text-align:
         cvat = match c["vat_number"].as_str() { Some(v) if !v.is_empty() => format!("<br>Momsreg.nr: {}", esc(v)), _ => String::new() },
         cur = esc(currency),
         rows = rows,
-        net = esc(inv["totals"]["net"].as_str().unwrap_or("")),
+        net = esc(&sv(inv["totals"]["net"].as_str().unwrap_or(""))),
         rate = inv["vat_rate"],
-        vat = esc(inv["totals"]["vat"].as_str().unwrap_or("")),
-        gross = esc(inv["totals"]["gross"].as_str().unwrap_or("")),
+        vat = esc(&sv(inv["totals"]["vat"].as_str().unwrap_or(""))),
+        gross = esc(&sv(inv["totals"]["gross"].as_str().unwrap_or(""))),
         pay = payment_block(&s.payment),
         notes = multiline(inv["notes"].as_str().unwrap_or("")),
     );
@@ -1289,6 +1316,16 @@ mod payment_block_tests {
             payment_block("Bankgiro 123-4567\n\nIBAN SE22"),
             "<div class=pay>Bankgiro 123-4567<br>IBAN SE22</div>"
         );
+    }
+
+    #[test]
+    fn amounts_use_swedish_separators() {
+        assert_eq!(super::sv("72000.00"), "72\u{a0}000,00");
+        assert_eq!(super::sv("-1234567.50"), "-1\u{a0}234\u{a0}567,50");
+        assert_eq!(super::sv("900.00"), "900,00");
+        assert_eq!(super::sv_qty("80.00"), "80");
+        assert_eq!(super::sv_qty("-1.00"), "-1");
+        assert_eq!(super::sv_qty("2.50"), "2,50");
     }
 
     #[test]
