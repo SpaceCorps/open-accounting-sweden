@@ -2228,7 +2228,7 @@ mod tests {
         assert_eq!(lines[0]["unit_price"], "20000.00");
         let d = lines[0]["description"].as_str().unwrap();
         assert!(
-            d.contains("RioRec") && d.contains("2026-10-01 to 2026-10-31"),
+            d.contains("RioRec") && d.contains("2026-10-01 till 2026-10-31"),
             "{d}"
         );
         assert_eq!(body["invoice"]["time_entries"], 0);

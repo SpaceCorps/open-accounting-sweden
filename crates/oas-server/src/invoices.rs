@@ -567,6 +567,8 @@ pub struct FromTime {
     due_days: Option<i64>,
     issue_date: Option<String>,
     notes: Option<String>,
+    /// Replaces the default line text.
+    description: Option<String>,
 }
 
 /// Build a draft invoice from a project's tracked hours that have not been invoiced yet. An hourly
@@ -645,15 +647,26 @@ pub async fn from_time(
     let first = first.unwrap_or_default();
     let last = last.unwrap_or_default();
     let hours: f64 = open.iter().map(|e| e.hours).sum();
+    // Hours are billed rounded up to whole hours.
+    let whole_hours = (hours - 1e-6).ceil().max(0.0) as i64;
+    let custom = b
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .map(String::from);
     let line = match (rate_type.as_str(), rate) {
         ("hourly", Some(r)) => LineBody {
-            description: format!("{project_name}: consulting, {first} to {last}"),
-            quantity: format!("{hours:.2}"),
+            description: custom
+                .clone()
+                .unwrap_or_else(|| format!("Datakonsult - {project_name}, {first} till {last}")),
+            quantity: whole_hours.to_string(),
             unit: Some("h".into()),
             unit_price: format_amount(r),
         },
         ("fixed", Some(r)) => LineBody {
-            description: format!("{project_name}: fixed fee, {first} to {last}"),
+            description: custom
+                .unwrap_or_else(|| format!("Datakonsult - {project_name}, {first} till {last}")),
             quantity: "1".into(),
             unit: Some("st".into()),
             unit_price: format_amount(r),
@@ -995,7 +1008,7 @@ fn esc(s: &str) -> String {
 }
 
 /// The seller's payment text as a stacked block: one item per line, split at line breaks and at the
-/// " · " that older texts use between items, under a small heading. Empty text gives no block.
+/// " · " that older texts use between items,. Empty text gives no block.
 fn payment_block(s: &str) -> String {
     let items: Vec<String> = s
         .lines()
@@ -1007,10 +1020,7 @@ fn payment_block(s: &str) -> String {
     if items.is_empty() {
         return String::new();
     }
-    format!(
-        "<div class=pay><strong>Payment details</strong><br>{}</div>",
-        items.join("<br>")
-    )
+    format!("<div class=pay>{}</div>", items.join("<br>"))
 }
 
 fn multiline(s: &str) -> String {
@@ -1035,7 +1045,7 @@ pub async fn invoice_html(
     let mut rows = String::new();
     for l in inv["lines"].as_array().cloned().unwrap_or_default() {
         rows.push_str(&format!(
-            "<tr><td>{}</td><td class=n>{} {}</td><td class=n>{}</td><td class=n>{}</td></tr>",
+            "<tr><td>{}</td><td class=n>{}</td><td>{}</td><td class=n>{}</td><td class=n>{}</td></tr>",
             esc(l["description"].as_str().unwrap_or("")),
             esc(l["quantity"].as_str().unwrap_or("")),
             esc(l["unit"].as_str().unwrap_or("")),
@@ -1043,38 +1053,59 @@ pub async fn invoice_html(
             esc(l["net"].as_str().unwrap_or("")),
         ));
     }
-    let service = match inv["service_date"].as_str() {
-        Some(d) if Some(d) != inv["issue_date"].as_str() => {
-            format!("<div>Date of supply: {}</div>", esc(d))
-        }
+    let short = |d: &str| d.get(2..).unwrap_or(d).to_string();
+    let issue_s = inv["issue_date"].as_str().unwrap_or("");
+    let due_s = inv["due_date"].as_str().unwrap_or("");
+    let terms = match (
+        chrono::NaiveDate::parse_from_str(issue_s, "%Y-%m-%d"),
+        chrono::NaiveDate::parse_from_str(due_s, "%Y-%m-%d"),
+    ) {
+        (Ok(i), Ok(d)) => format!("{} dagar netto", (d - i).num_days()),
         _ => String::new(),
     };
     let html = format!(
-        "<!doctype html><html lang=sv><head><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><title>Invoice {label}</title><style>
-body{{font:14px/1.5 system-ui,sans-serif;margin:0;color:#111;background:#fff}}main{{max-width:780px;margin:2rem auto;padding:0 1.5rem;position:relative}}
-h1{{font-size:1.6rem;margin:0}}.row{{display:flex;justify-content:space-between;gap:2rem;margin:1.5rem 0}}.muted{{color:#555}}
-table{{width:100%;border-collapse:collapse;margin:1.5rem 0}}th,td{{padding:.5rem .4rem;border-bottom:1px solid #ddd;text-align:left}}.n{{text-align:right;white-space:nowrap}}
-.tot{{margin-left:auto;width:16rem}}.tot div{{display:flex;justify-content:space-between;padding:.2rem 0}}.tot .g{{font-weight:700;border-top:2px solid #111;margin-top:.3rem;padding-top:.4rem}}
-.pay{{margin:1.5rem 0;padding:.75rem 1rem;border:1px solid #ddd;border-radius:6px;color:#333;line-height:1.7}}.wm{{position:absolute;top:30%;left:10%;font-size:6rem;color:rgba(200,0,0,.12);transform:rotate(-20deg);pointer-events:none}}
+        "<!doctype html><html lang=sv><head><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><title>Faktura {label}</title><style>
+body{{font:13px/1.45 Helvetica,Arial,sans-serif;margin:0;color:#111;background:#fff}}main{{max-width:780px;margin:2rem auto;padding:0 1.5rem 4rem;position:relative;min-height:90vh}}
+h1{{font-size:1.5rem;letter-spacing:.05em;margin:0 0 1.5rem 50%}}.addr{{margin:0 0 2rem 50%}}.addr b{{display:block;margin-bottom:.2rem}}
+.meta{{display:flex;gap:2rem;margin-bottom:2rem}}.meta>div{{flex:1}}.kv{{display:flex;gap:.5rem;padding:.1rem 0}}.kv span:first-child{{width:9rem;flex:none}}
+.pay{{margin-top:.3rem;line-height:1.5}}
+table{{width:100%;border-collapse:collapse;margin:1.5rem 0 1rem}}th{{text-align:left;font-weight:700;padding:.3rem .4rem;border-bottom:1px solid #111}}td{{padding:.4rem}}.n{{text-align:right;white-space:nowrap}}
+.tot{{margin-left:auto;width:17rem}}.tot div{{display:flex;justify-content:space-between;padding:.15rem 0}}.tot .g{{font-weight:700;border-top:1px solid #111;margin-top:.3rem;padding-top:.3rem}}
+.small{{margin-top:2rem;font-size:12px}}.foot{{position:absolute;bottom:0;left:0;right:0;text-align:center;font-size:11px;color:#333;border-top:1px solid #ccc;padding:.5rem 1.5rem}}.muted{{color:#555}}
+.wm{{position:absolute;top:30%;left:10%;font-size:6rem;color:rgba(200,0,0,.12);transform:rotate(-20deg);pointer-events:none}}
 @media print{{main{{margin:0}}}}</style></head><body><main>{wm}
-<div class=row><div><h1>Invoice {label}</h1><div class=muted>Faktura</div></div><div style=\"text-align:right\"><div>Invoice date: {issue}</div><div>Due date: {due}</div>{service}</div></div>
-<div class=row><div><strong>{sname}</strong><br>{saddr}<br>Org no: {sorg}<br>VAT no: {svat}{fskatt}</div><div><strong>{cname}</strong><br>{caddr}{cvat}</div></div>
-<table><thead><tr><th>Description</th><th class=n>Quantity</th><th class=n>Unit price ({cur})</th><th class=n>Amount ({cur})</th></tr></thead><tbody>{rows}</tbody></table>
-<div class=tot><div><span>Total excl. VAT</span><span>{net}</span></div><div><span>VAT {rate}%</span><span>{vat}</span></div><div class=g><span>To pay ({cur})</span><span>{gross}</span></div></div>
-{pay}<p class=muted>{notes}</p></main></body></html>",
+<h1>FAKTURA</h1>
+<div class=addr><b>Kundadress</b>{cname}<br>{caddr}{cvat}</div>
+<div class=meta><div>
+<div class=kv><span>Faktura nr.:</span><span>{label}</span></div>
+<div class=kv><span>Fakturadatum:</span><span>{issue}</span></div>
+<div class=kv><span>Betalningsvillkor:</span><span>{terms}</span></div>
+<div class=kv><span>Förfallodag:</span><span>{due}</span></div>
+<div class=kv><span>Er referens:</span><span></span></div>
+<div class=kv><span>Vår referens:</span><span></span></div>
+</div><div>
+<div class=kv><span>Organisationsnummer:</span><span>{sorg}</span></div>
+<div class=kv><span>Vårt moms reg.nr.:</span><span>{svat}</span></div>
+{pay}{fskatt}
+</div></div>
+<table><thead><tr><th>Beskrivning</th><th class=n>Mängd</th><th>Enhet</th><th class=n>A pris</th><th class=n>Belopp ({cur})</th></tr></thead><tbody>{rows}</tbody></table>
+<div class=tot><div><span>Summa:</span><span>{net}</span></div><div><span>Mervärdeskatt {rate}%:</span><span>{vat}</span></div><div><span>Öresutjämning:</span><span>0,00</span></div><div class=g><span>Total SUMMA:</span><span>{gross}</span></div></div>
+<p class=small>Efter förfallodag debiteras dröjsmålsränta enligt räntelagen<br>Eventuella invändningar mot denna faktura skall ske inom 10 dagar</p>
+<p class=muted>{notes}</p>
+<div class=foot>{sname} * {saddr_line}</div></main></body></html>",
         label = esc(&label),
-        wm = if draft { "<div class=wm>DRAFT</div>" } else { "" },
-        issue = esc(inv["issue_date"].as_str().unwrap_or("")),
-        due = esc(inv["due_date"].as_str().unwrap_or("")),
-        service = service,
+        wm = if draft { "<div class=wm>UTKAST</div>" } else { "" },
+        issue = esc(&short(issue_s)),
+        due = esc(&short(due_s)),
+        terms = esc(&terms),
         sname = esc(&s.name),
-        saddr = multiline(&s.address),
+        saddr_line = esc(&s.address.replace('\n', ", ")),
         sorg = esc(&s.org),
         svat = esc(&s.vat_number),
-        fskatt = if s.f_skatt { "<br>Approved for F-tax (godkänd för F-skatt)" } else { "" },
+        fskatt = if s.f_skatt { "<div class=kv style=\"margin-top:.8rem\">Godkänd för F-skatt</div>" } else { "" },
         cname = esc(c["name"].as_str().unwrap_or("")),
         caddr = multiline(c["address"].as_str().unwrap_or("")),
-        cvat = match c["vat_number"].as_str() { Some(v) if !v.is_empty() => format!("<br>VAT no: {}", esc(v)), _ => String::new() },
+        cvat = match c["vat_number"].as_str() { Some(v) if !v.is_empty() => format!("<br>Momsreg.nr: {}", esc(v)), _ => String::new() },
         cur = esc(currency),
         rows = rows,
         net = esc(inv["totals"]["net"].as_str().unwrap_or("")),
@@ -1108,11 +1139,11 @@ mod payment_block_tests {
         let html = payment_block(one_line);
         assert_eq!(
             html,
-            "<div class=pay><strong>Payment details</strong><br>IBAN SE22 9710<br>BIC LUNADK2B<br>Account 9710-37 303 60</div>"
+            "<div class=pay>IBAN SE22 9710<br>BIC LUNADK2B<br>Account 9710-37 303 60</div>"
         );
         assert_eq!(
             payment_block("Bankgiro 123-4567\n\nIBAN SE22"),
-            "<div class=pay><strong>Payment details</strong><br>Bankgiro 123-4567<br>IBAN SE22</div>"
+            "<div class=pay>Bankgiro 123-4567<br>IBAN SE22</div>"
         );
     }
 
