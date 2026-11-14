@@ -173,7 +173,13 @@ function NewInvoice({
       if (mode === "time") {
         await api("/invoices/from-time", {
           method: "POST",
-          body: { ...common, project, from: from || null, to: to || null },
+          body: {
+            ...common,
+            project,
+            from: from || null,
+            to: to || null,
+            description: description.trim() || null,
+          },
         });
       } else {
         await api("/invoices", {
@@ -262,6 +268,12 @@ function NewInvoice({
                       <TextField label="From" type="date" value={from} onChange={setFrom} />
                       <TextField label="To" type="date" value={to} onChange={setTo} />
                     </div>
+                    <TextField
+                      label="Line text (optional)"
+                      hint="Hours are billed rounded up to whole hours. Leave empty for the default Swedish text."
+                      value={description}
+                      onChange={setDescription}
+                    />
                   </div>
                 </TabsContent>
                 <TabsContent value="manual">
