@@ -1223,8 +1223,6 @@ struct Words {
     due: &'static str,
     your_ref: &'static str,
     our_ref: &'static str,
-    org: &'static str,
-    vat_no: &'static str,
     f_tax: &'static str,
     description: &'static str,
     quantity: &'static str,
@@ -1236,6 +1234,10 @@ struct Words {
     total: &'static str,
     interest: &'static str,
     objections: &'static str,
+    org_short: &'static str,
+    vat_short: &'static str,
+    payment: &'static str,
+    amount: &'static str,
 }
 
 fn words(lang: &str) -> Words {
@@ -1252,8 +1254,6 @@ fn words(lang: &str) -> Words {
             due: "Due date:",
             your_ref: "Your reference:",
             our_ref: "Our reference:",
-            org: "Organisation no.:",
-            vat_no: "Our VAT reg. no.:",
             f_tax: "Approved for F-tax",
             description: "Description",
             quantity: "Quantity",
@@ -1265,6 +1265,10 @@ fn words(lang: &str) -> Words {
             total: "Total amount:",
             interest: "After the due date, interest on late payment is charged under the Swedish Interest Act",
             objections: "Any objections to this invoice must be made within 10 days",
+            org_short: "Org. no.",
+            vat_short: "VAT no.",
+            payment: "Payment details",
+            amount: "Amount",
         }
     } else {
         Words {
@@ -1279,8 +1283,6 @@ fn words(lang: &str) -> Words {
             due: "Förfallodag:",
             your_ref: "Er referens:",
             our_ref: "Vår referens:",
-            org: "Organisationsnummer:",
-            vat_no: "Vårt moms reg.nr.:",
             f_tax: "Godkänd för F-skatt",
             description: "Beskrivning",
             quantity: "Mängd",
@@ -1292,6 +1294,10 @@ fn words(lang: &str) -> Words {
             total: "Total SUMMA:",
             interest: "Efter förfallodag debiteras dröjsmålsränta enligt räntelagen",
             objections: "Eventuella invändningar mot denna faktura skall ske inom 10 dagar",
+            org_short: "Org.nr",
+            vat_short: "Momsreg.nr",
+            payment: "Betalningsuppgifter",
+            amount: "Belopp",
         }
     }
 }
@@ -1334,7 +1340,7 @@ pub async fn invoice_html(
             unit
         };
         rows.push_str(&format!(
-            "<tr><td>{}</td><td class=n>{}</td><td class=u>{}</td><td class=n>{}</td><td class=n>{}</td></tr>",
+            "<tr><td>{}</td><td class='n q'>{}</td><td class=u>{}</td><td class='n p'>{}</td><td class='n a'>{}</td></tr>",
             esc(l["description"].as_str().unwrap_or("")),
             esc(&sv_qty(l["quantity"].as_str().unwrap_or(""))),
             esc(unit),
@@ -1359,92 +1365,108 @@ pub async fn invoice_html(
         }
         _ => String::new(),
     };
-    let footer = s
-        .address
-        .split([',', '\n'])
-        .map(str::trim)
-        .filter(|p| !p.is_empty())
-        .collect::<Vec<_>>()
-        .join(" * ");
+    // Reference rows only show when there is something to show.
+    let meta_row = |label: &str, value: &str| -> String {
+        if value.is_empty() || value == "-" {
+            String::new()
+        } else {
+            format!("<div><span>{label}</span><b>{}</b></div>", esc(value))
+        }
+    };
+    let meta = [
+        meta_row(w.number, &label),
+        meta_row(w.date, &short(issue_s)),
+        meta_row(w.due, &short(due_s)),
+        meta_row(w.terms, &terms),
+        meta_row(w.your_ref, inv["your_reference"].as_str().unwrap_or("")),
+        meta_row(w.our_ref, inv["our_reference"].as_str().unwrap_or("")),
+    ]
+    .concat();
+    let ids = [
+        format!("{} {}", w.org_short, s.org),
+        format!("{} {}", w.vat_short, s.vat_number),
+    ]
+    .into_iter()
+    .chain(s.f_skatt.then(|| w.f_tax.to_string()))
+    .map(|x| esc(&x))
+    .collect::<Vec<_>>()
+    .join(" &nbsp;·&nbsp; ");
+    let payment = payment_block(&s.payment, lang);
+    let pay_box = if payment.is_empty() {
+        String::new()
+    } else {
+        format!("<div class=pay><h3>{}</h3>{payment}</div>", w.payment)
+    };
+    let notes = inv["notes"].as_str().unwrap_or("");
+    let notes_html = if notes.trim().is_empty() {
+        String::new()
+    } else {
+        format!("<p class=notes>{}</p>", multiline(notes))
+    };
     let html = format!(
         "<!doctype html><html lang={hl}><head><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><title>{title} {label}</title><style>
 @page{{size:A4;margin:0}}
-body{{font:13px/1.4 Helvetica,Arial,sans-serif;margin:0;color:#000;background:#eee}}
-.page{{width:210mm;min-height:297mm;box-sizing:border-box;margin:0 auto;background:#fff;padding:12mm 16mm 8mm;position:relative}}
-.top{{display:flex;min-height:52mm}}.top>div{{flex:1}}.logo{{font-size:26px;font-weight:700;line-height:1.05;color:#4d4d33;text-transform:uppercase;padding-top:4mm}}
-h1{{font-size:17px;margin:2mm 0 0}}.cust{{margin-top:14mm}}.cust small{{display:block;font-size:11px;color:#555;margin-bottom:1.5mm}}.cust div{{font-size:13.5px;line-height:1.5}}
-.meta{{display:flex;gap:4mm;margin:0 0 8mm;padding-left:4mm}}.meta>div{{flex:1}}.kv{{display:flex;padding:.4mm 0}}.kv span:first-child{{width:38mm;flex:none}}.kv span{{white-space:nowrap}}
-.pl{{padding:.4mm 0}}
-.box{{border:1px solid #666;display:flex;flex-direction:column;min-height:128mm;padding:0 0 6mm}}
-table{{width:100%;border-collapse:collapse}}th{{font-weight:700;text-align:right;padding:2mm 3mm 0}}th:first-child{{text-align:left}}td{{padding:2.5mm 3mm 0;vertical-align:top}}.n{{text-align:right;white-space:nowrap}}.u{{text-align:right;white-space:nowrap;width:14mm}}
-.sp{{flex:1}}.tot{{width:56%;margin-left:44%;padding-right:14mm;box-sizing:border-box}}.tot div{{display:flex;justify-content:space-between;padding:1.6mm 0}}.tot .g{{font-weight:700}}
-.small{{margin:4mm 0 0 4mm}}.foot{{margin:8mm 0 0 4mm}}.muted{{color:#555;margin:4mm 0 0 4mm}}
-.wm{{position:absolute;top:38%;left:14%;font-size:110px;color:rgba(200,0,0,.10);transform:rotate(-20deg);pointer-events:none}}
+*{{box-sizing:border-box}}
+body{{font:13px/1.5 'Helvetica Neue',Helvetica,Arial,sans-serif;margin:0;color:#1b1f24;background:#e9ebee}}
+.page{{width:210mm;min-height:297mm;margin:0 auto;background:#fff;padding:16mm 18mm 12mm;position:relative;display:flex;flex-direction:column}}
+.head{{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:7mm;border-bottom:2px solid #1b1f24}}
+.co{{font-size:19px;font-weight:700;letter-spacing:-.01em}}.co small{{display:block;font-size:12px;font-weight:400;color:#5b6470;letter-spacing:0;margin-top:1mm;line-height:1.45}}
+.ti{{text-align:right}}.ti h1{{margin:0;font-size:26px;font-weight:300;letter-spacing:.14em}}.ti div{{color:#5b6470;margin-top:1mm}}
+.cols{{display:flex;justify-content:space-between;gap:12mm;margin:10mm 0 9mm}}
+.cust{{flex:1}}.lbl{{font-size:10.5px;text-transform:uppercase;letter-spacing:.09em;color:#5b6470;margin-bottom:1.5mm}}
+.cust .nm{{font-size:15px;font-weight:700;margin-bottom:.5mm}}
+.meta{{width:78mm}}.meta div{{display:flex;justify-content:space-between;gap:6mm;padding:1.1mm 0;border-bottom:1px solid #e3e6ea}}.meta span{{color:#5b6470}}
+table{{width:100%;border-collapse:collapse;margin-top:2mm}}
+th{{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:#5b6470;font-weight:600;text-align:left;padding:2.5mm 2mm;background:#f3f4f6;border-bottom:1px solid #d5d9de}}
+td{{padding:3.2mm 2mm;border-bottom:1px solid #e3e6ea;vertical-align:top}}
+th.n,td.n{{text-align:right;white-space:nowrap}}th.q,td.q{{width:20mm}}th.u,td.u{{width:14mm;text-align:left;white-space:nowrap;padding-left:3mm}}th.p,td.p{{width:30mm}}th.a,td.a{{width:34mm}}
+.totals{{display:flex;justify-content:flex-end;margin-top:6mm}}.totals>div{{width:84mm}}
+.totals p{{display:flex;justify-content:space-between;margin:0;padding:1.3mm 2mm}}.totals p span:first-child{{color:#5b6470}}
+.totals .g{{margin-top:2mm;padding:3mm 2mm;border-top:2px solid #1b1f24;font-size:16px;font-weight:700}}.totals .g span:first-child{{color:#1b1f24}}
+.pay{{margin-top:12mm;background:#f6f7f9;border-radius:2mm;padding:4mm 5mm}}.pay h3{{margin:0 0 2mm;font-size:10.5px;text-transform:uppercase;letter-spacing:.09em;color:#5b6470;font-weight:600}}
+.kv{{display:grid;grid-template-columns:24mm 1fr;padding:.5mm 0}}.kv span:first-child{{color:#5b6470}}.kv span:last-child{{font-weight:600}}.pl{{padding:.5mm 0;color:#3b424b}}
+.notes{{margin:6mm 0 0;color:#3b424b}}
+.fine{{margin-top:auto;padding-top:10mm;color:#5b6470;font-size:11.5px}}.fine p{{margin:0 0 4mm}}
+.foot{{border-top:1px solid #d5d9de;padding-top:3mm;font-size:11px;color:#5b6470;display:flex;justify-content:space-between;gap:6mm}}
+.wm{{position:absolute;top:42%;left:18%;font-size:110px;font-weight:700;color:rgba(200,0,0,.08);transform:rotate(-20deg);pointer-events:none}}
 @media print{{body{{background:#fff}}.page{{margin:0}}}}</style></head><body><div class=page>{wm}
-<div class=top><div class=logo>{logo}</div><div><h1>{title}</h1><div class=cust><small>{ca}</small><div>{cname}<br>{caddr}</div></div></div></div>
-<div class=meta><div>
-<div class=kv><span>{l_no}</span><span>{label}</span></div>
-<div class=kv><span>{l_date}</span><span>{issue}</span></div>
-<div class=kv><span>{l_terms}</span><span>{terms}</span></div>
-<div class=kv><span>{l_due}</span><span>{due}</span></div>
-<div class=kv><span>{l_your}</span><span></span></div>
-<div class=kv><span>{l_our}</span><span></span></div>
-</div><div>
-<div class=kv><span>{l_org}</span><span>{sorg}</span></div>
-<div class=kv><span>{l_vat}</span><span>{svat}</span></div>
-{pay}{fskatt}
-</div></div>
-<div class=box><table><thead><tr><th>{l_desc}</th><th>{l_qty}</th><th>{l_unit}</th><th>{l_up}</th><th></th></tr></thead><tbody>{rows}</tbody></table>
-<div class=sp></div>
-<div class=tot><div><span>{l_sub}</span><span>{net}</span></div><div><span>{l_vatw} {rate}%:</span><span>{vat}</span></div><div><span>{l_round}</span><span>0,00</span></div><div class=g><span>{l_total}</span><span>{gross}</span></div></div></div>
-<div class=small>{interest}<br>{objections}</div>
-<div class=muted>{notes}</div>
-<div class=foot>{sname} * {footer}</div></div></body></html>",
+<div class=head><div class=co>{sname}<small>{saddr}</small></div><div class=ti><h1>{title}</h1><div>{label_line}</div></div></div>
+<div class=cols><div class=cust><div class=lbl>{ca}</div><div class=nm>{cname}</div>{caddr}</div><div class=meta>{meta}</div></div>
+<table><thead><tr><th>{l_desc}</th><th class='n q'>{l_qty}</th><th class=u>{l_unit}</th><th class='n p'>{l_up}</th><th class='n a'>{l_amount} ({cur})</th></tr></thead><tbody>{rows}</tbody></table>
+<div class=totals><div><p><span>{l_sub}</span><span>{net}</span></p><p><span>{l_vatw} {rate}%</span><span>{vat}</span></p><p><span>{l_round}</span><span>0,00</span></p><p class=g><span>{l_total}</span><span>{gross} {cur}</span></p></div></div>
+{pay_box}{notes_html}
+<div class=fine><p>{interest}.<br>{objections}.</p><div class=foot><span>{ids}</span></div></div></div></body></html>",
         hl = w.html_lang,
         title = if is_credit { w.credit_note } else { w.invoice },
         label = esc(&label),
+        label_line = if label == "-" { w.draft.to_string() } else { esc(&label) },
         wm = if draft { format!("<div class=wm>{}</div>", w.draft) } else { String::new() },
-        logo = esc(&s.name),
+        sname = esc(&s.name),
+        saddr = s.address.split([',', '\n']).map(str::trim).filter(|p| !p.is_empty()).map(esc).collect::<Vec<_>>().join("<br>"),
         ca = w.customer_address,
-        l_no = w.number,
-        l_date = w.date,
-        l_terms = w.terms,
-        l_due = w.due,
-        l_your = w.your_ref,
-        l_our = w.our_ref,
-        l_org = w.org,
-        l_vat = w.vat_no,
+        cname = esc(c["name"].as_str().unwrap_or("")),
+        caddr = multiline(&c["address"].as_str().unwrap_or("").replace(", ", "\n")),
+        meta = meta,
         l_desc = w.description,
         l_qty = w.quantity,
         l_unit = w.unit,
         l_up = w.unit_price,
+        l_amount = w.amount,
         l_sub = w.subtotal,
         l_vatw = w.vat,
         l_round = w.rounding,
         l_total = w.total,
+        cur = esc(currency),
         interest = w.interest,
         objections = w.objections,
-        issue = esc(&short(issue_s)),
-        due = esc(&short(due_s)),
-        terms = esc(&terms),
-        sname = esc(&s.name),
-        footer = esc(&footer),
-        sorg = esc(&s.org),
-        svat = esc(&s.vat_number),
-        pay = payment_block(&s.payment, lang),
-        fskatt = if s.f_skatt {
-            format!("<div class=pl>{}</div>", w.f_tax)
-        } else {
-            String::new()
-        },
-        cname = esc(c["name"].as_str().unwrap_or("")),
-        caddr = multiline(c["address"].as_str().unwrap_or("")),
         rows = rows,
         net = esc(&sv(inv["totals"]["net"].as_str().unwrap_or(""))),
         rate = inv["vat_rate"],
         vat = esc(&sv(inv["totals"]["vat"].as_str().unwrap_or(""))),
         gross = esc(&sv(inv["totals"]["gross"].as_str().unwrap_or(""))),
-        notes = multiline(inv["notes"].as_str().unwrap_or("")),
+        pay_box = pay_box,
+        notes_html = notes_html,
+        ids = ids,
     );
     let _ = currency;
     let mut res = html.into_response();
