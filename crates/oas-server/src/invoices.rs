@@ -1175,48 +1175,169 @@ fn esc(s: &str) -> String {
         .replace('\'', "&#39;")
 }
 
-/// The seller's payment text as a stacked block: one item per line, split at line breaks and at the
-/// " · " that older texts use between items,. Empty text gives no block.
-fn payment_block(s: &str) -> String {
-    let items: Vec<String> = s
+/// The seller's payment text, split at line breaks and at the " · " that older texts use between
+/// items. A leading IBAN, BIC, Bankgiro, Plusgiro or Account becomes a label and value row, like
+/// "Bankgiro: 722-4769" on a Swedish invoice; other items are plain lines. Empty text gives nothing.
+fn payment_block(s: &str, lang: &str) -> String {
+    let mut out = String::new();
+    for item in s
         .lines()
         .flat_map(|l| l.split(" \u{b7} "))
         .map(str::trim)
         .filter(|x| !x.is_empty())
-        .map(esc)
-        .collect();
-    if items.is_empty() {
-        return String::new();
+    {
+        let (first, rest) = item.split_once(char::is_whitespace).unwrap_or((item, ""));
+        let label = match first.to_lowercase().as_str() {
+            "iban" => Some("Iban"),
+            "bic" | "bic/swift" | "swift" => Some("Bic"),
+            "bankgiro" => Some("Bankgiro"),
+            "plusgiro" => Some("Plusgiro"),
+            "account" | "konto" => Some(if lang == "en" { "Account" } else { "Konto" }),
+            _ => None,
+        };
+        match label {
+            Some(l) if !rest.trim().is_empty() => out.push_str(&format!(
+                "<div class=kv><span>{l}:</span><span>{}</span></div>",
+                esc(rest.trim())
+            )),
+            _ => out.push_str(&format!("<div class=pl>{}</div>", esc(item))),
+        }
     }
-    format!("<div class=pay>{}</div>", items.join("<br>"))
+    out
 }
 
 fn multiline(s: &str) -> String {
     esc(s).replace('\n', "<br>")
 }
 
-/// A printable invoice page. Print it to PDF from the browser. Draft invoices carry a watermark.
+/// Texts of the printed invoice in one language.
+struct Words {
+    html_lang: &'static str,
+    invoice: &'static str,
+    credit_note: &'static str,
+    draft: &'static str,
+    customer_address: &'static str,
+    number: &'static str,
+    date: &'static str,
+    terms: &'static str,
+    due: &'static str,
+    your_ref: &'static str,
+    our_ref: &'static str,
+    org: &'static str,
+    vat_no: &'static str,
+    f_tax: &'static str,
+    description: &'static str,
+    quantity: &'static str,
+    unit: &'static str,
+    unit_price: &'static str,
+    subtotal: &'static str,
+    vat: &'static str,
+    rounding: &'static str,
+    total: &'static str,
+    interest: &'static str,
+    objections: &'static str,
+}
+
+fn words(lang: &str) -> Words {
+    if lang == "en" {
+        Words {
+            html_lang: "en",
+            invoice: "INVOICE",
+            credit_note: "CREDIT NOTE",
+            draft: "DRAFT",
+            customer_address: "Customer address",
+            number: "Invoice no.:",
+            date: "Invoice date:",
+            terms: "Payment terms:",
+            due: "Due date:",
+            your_ref: "Your reference:",
+            our_ref: "Our reference:",
+            org: "Organisation no.:",
+            vat_no: "Our VAT reg. no.:",
+            f_tax: "Approved for F-tax",
+            description: "Description",
+            quantity: "Quantity",
+            unit: "Unit",
+            unit_price: "Unit price",
+            subtotal: "Subtotal:",
+            vat: "VAT",
+            rounding: "Rounding:",
+            total: "Total amount:",
+            interest: "After the due date, interest on late payment is charged under the Swedish Interest Act",
+            objections: "Any objections to this invoice must be made within 10 days",
+        }
+    } else {
+        Words {
+            html_lang: "sv",
+            invoice: "FAKTURA",
+            credit_note: "KREDITFAKTURA",
+            draft: "UTKAST",
+            customer_address: "Kundadress",
+            number: "Faktura nr.:",
+            date: "Fakturadatum:",
+            terms: "Betalningsvillkor:",
+            due: "Förfallodag:",
+            your_ref: "Er referens:",
+            our_ref: "Vår referens:",
+            org: "Organisationsnummer:",
+            vat_no: "Vårt moms reg.nr.:",
+            f_tax: "Godkänd för F-skatt",
+            description: "Beskrivning",
+            quantity: "Mängd",
+            unit: "Enhet",
+            unit_price: "A pris",
+            subtotal: "Summa:",
+            vat: "Mervärdeskatt",
+            rounding: "Öresutjämning:",
+            total: "Total SUMMA:",
+            interest: "Efter förfallodag debiteras dröjsmålsränta enligt räntelagen",
+            objections: "Eventuella invändningar mot denna faktura skall ske inom 10 dagar",
+        }
+    }
+}
+
+#[derive(Deserialize, Default)]
+pub struct HtmlQuery {
+    /// "sv" (the default) or "en".
+    lang: Option<String>,
+}
+
+/// A printable invoice page on A4, laid out like a Swedish consultant invoice. Print it to PDF from
+/// the browser. `?lang=en` prints it in English; the default is Swedish. Drafts carry a watermark.
 pub async fn invoice_html(
     State(st): State<Shared>,
     Path(id): Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<HtmlQuery>,
 ) -> Result<Response, ApiError> {
+    let lang = q.lang.as_deref().unwrap_or("sv");
+    if !matches!(lang, "sv" | "en") {
+        return Err(ApiError::invalid("lang must be sv or en"));
+    }
+    let w = words(lang);
     let conn = st.conn.lock().unwrap();
     let inv = invoice_json(&conn, id)?;
     let s = seller(&conn)?;
     let c = &inv["customer"];
     let draft = inv["status"] == "draft";
+    let is_credit = !inv["credit_of"].is_null();
     let label = inv["label"]
         .as_str()
         .map(str::to_string)
-        .unwrap_or_else(|| "DRAFT".into());
+        .unwrap_or_else(|| "-".into());
     let currency = inv["currency"].as_str().unwrap_or("SEK");
     let mut rows = String::new();
     for l in inv["lines"].as_array().cloned().unwrap_or_default() {
+        let unit = l["unit"].as_str().unwrap_or("");
+        let unit = if lang == "en" && unit == "st" {
+            "pcs"
+        } else {
+            unit
+        };
         rows.push_str(&format!(
-            "<tr><td>{}</td><td class=n>{}</td><td>{}</td><td class=n>{}</td><td class=n>{}</td></tr>",
+            "<tr><td>{}</td><td class=n>{}</td><td class=u>{}</td><td class=n>{}</td><td class=n>{}</td></tr>",
             esc(l["description"].as_str().unwrap_or("")),
             esc(&sv_qty(l["quantity"].as_str().unwrap_or(""))),
-            esc(l["unit"].as_str().unwrap_or("")),
+            esc(unit),
             esc(&sv(l["unit_price"].as_str().unwrap_or(""))),
             esc(&sv(l["net"].as_str().unwrap_or(""))),
         ));
@@ -1228,64 +1349,104 @@ pub async fn invoice_html(
         chrono::NaiveDate::parse_from_str(issue_s, "%Y-%m-%d"),
         chrono::NaiveDate::parse_from_str(due_s, "%Y-%m-%d"),
     ) {
-        (Ok(i), Ok(d)) if inv["credit_of"].is_null() => {
-            format!("{} dagar netto", (d - i).num_days())
+        (Ok(i), Ok(d)) if !is_credit => {
+            let n = (d - i).num_days();
+            if lang == "en" {
+                format!("{n} days net")
+            } else {
+                format!("{n} dagar netto")
+            }
         }
         _ => String::new(),
     };
+    let footer = s
+        .address
+        .split([',', '\n'])
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join(" * ");
     let html = format!(
-        "<!doctype html><html lang=sv><head><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><title>Faktura {label}</title><style>
-body{{font:13px/1.45 Helvetica,Arial,sans-serif;margin:0;color:#111;background:#fff}}main{{max-width:780px;margin:2rem auto;padding:0 1.5rem 4rem;position:relative;min-height:90vh}}
-h1{{font-size:1.5rem;letter-spacing:.05em;margin:0 0 1.5rem 50%}}.addr{{margin:0 0 2rem 50%}}.addr b{{display:block;margin-bottom:.2rem}}
-.meta{{display:flex;gap:2rem;margin-bottom:2rem}}.meta>div{{flex:1}}.kv{{display:flex;gap:.5rem;padding:.1rem 0}}.kv span:first-child{{width:9rem;flex:none}}
-.pay{{margin-top:.3rem;line-height:1.5}}
-table{{width:100%;border-collapse:collapse;margin:1.5rem 0 1rem}}th{{text-align:left;font-weight:700;padding:.3rem .4rem;border-bottom:1px solid #111}}td{{padding:.4rem}}.n{{text-align:right;white-space:nowrap}}
-.tot{{margin-left:auto;width:17rem}}.tot div{{display:flex;justify-content:space-between;padding:.15rem 0}}.tot .g{{font-weight:700;border-top:1px solid #111;margin-top:.3rem;padding-top:.3rem}}
-.small{{margin-top:2rem;font-size:12px}}.foot{{position:absolute;bottom:0;left:0;right:0;text-align:center;font-size:11px;color:#333;border-top:1px solid #ccc;padding:.5rem 1.5rem}}.muted{{color:#555}}
-.wm{{position:absolute;top:30%;left:10%;font-size:6rem;color:rgba(200,0,0,.12);transform:rotate(-20deg);pointer-events:none}}
-@media print{{main{{margin:0}}}}</style></head><body><main>{wm}
-<h1>{title}</h1>
-<div class=addr><b>Kundadress</b>{cname}<br>{caddr}{cvat}</div>
+        "<!doctype html><html lang={hl}><head><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><title>{title} {label}</title><style>
+@page{{size:A4;margin:0}}
+body{{font:13px/1.4 Helvetica,Arial,sans-serif;margin:0;color:#000;background:#eee}}
+.page{{width:210mm;min-height:297mm;box-sizing:border-box;margin:0 auto;background:#fff;padding:12mm 16mm 8mm;position:relative}}
+.top{{display:flex;min-height:52mm}}.top>div{{flex:1}}.logo{{font-size:26px;font-weight:700;line-height:1.05;color:#4d4d33;text-transform:uppercase;padding-top:4mm}}
+h1{{font-size:17px;margin:2mm 0 0}}.cust{{margin-top:14mm}}.cust small{{display:block;font-size:6.5px;margin-bottom:2mm}}.cust div{{font-size:13.5px;line-height:1.5}}
+.meta{{display:flex;gap:4mm;margin:0 0 8mm;padding-left:4mm}}.meta>div{{flex:1}}.kv{{display:flex;padding:.4mm 0}}.kv span:first-child{{width:38mm;flex:none}}.kv span{{white-space:nowrap}}
+.pl{{padding:.4mm 0}}
+.box{{border:1px solid #666;display:flex;flex-direction:column;min-height:128mm;padding:0 0 6mm}}
+table{{width:100%;border-collapse:collapse}}th{{font-weight:700;text-align:right;padding:2mm 3mm 0}}th:first-child{{text-align:left}}td{{padding:2.5mm 3mm 0;vertical-align:top}}.n{{text-align:right;white-space:nowrap}}.u{{text-align:right;white-space:nowrap;width:14mm}}
+.sp{{flex:1}}.tot{{width:56%;margin-left:44%;padding-right:14mm;box-sizing:border-box}}.tot div{{display:flex;justify-content:space-between;padding:1.6mm 0}}.tot .g{{font-weight:700}}
+.small{{margin:4mm 0 0 4mm}}.foot{{margin:8mm 0 0 4mm}}.muted{{color:#555;margin:4mm 0 0 4mm}}
+.wm{{position:absolute;top:38%;left:14%;font-size:110px;color:rgba(200,0,0,.10);transform:rotate(-20deg);pointer-events:none}}
+@media print{{body{{background:#fff}}.page{{margin:0}}}}</style></head><body><div class=page>{wm}
+<div class=top><div class=logo>{logo}</div><div><h1>{title}</h1><div class=cust><small>{ca}</small><div>{cname}<br>{caddr}</div></div></div></div>
 <div class=meta><div>
-<div class=kv><span>Faktura nr.:</span><span>{label}</span></div>
-<div class=kv><span>Fakturadatum:</span><span>{issue}</span></div>
-<div class=kv><span>Betalningsvillkor:</span><span>{terms}</span></div>
-<div class=kv><span>Förfallodag:</span><span>{due}</span></div>
-<div class=kv><span>Er referens:</span><span></span></div>
-<div class=kv><span>Vår referens:</span><span></span></div>
+<div class=kv><span>{l_no}</span><span>{label}</span></div>
+<div class=kv><span>{l_date}</span><span>{issue}</span></div>
+<div class=kv><span>{l_terms}</span><span>{terms}</span></div>
+<div class=kv><span>{l_due}</span><span>{due}</span></div>
+<div class=kv><span>{l_your}</span><span></span></div>
+<div class=kv><span>{l_our}</span><span></span></div>
 </div><div>
-<div class=kv><span>Organisationsnummer:</span><span>{sorg}</span></div>
-<div class=kv><span>Vårt moms reg.nr.:</span><span>{svat}</span></div>
+<div class=kv><span>{l_org}</span><span>{sorg}</span></div>
+<div class=kv><span>{l_vat}</span><span>{svat}</span></div>
 {pay}{fskatt}
 </div></div>
-<table><thead><tr><th>Beskrivning</th><th class=n>Mängd</th><th>Enhet</th><th class=n>A pris</th><th class=n>Belopp ({cur})</th></tr></thead><tbody>{rows}</tbody></table>
-<div class=tot><div><span>Summa:</span><span>{net}</span></div><div><span>Mervärdeskatt {rate}%:</span><span>{vat}</span></div><div><span>Öresutjämning:</span><span>0,00</span></div><div class=g><span>Total SUMMA:</span><span>{gross}</span></div></div>
-<p class=small>Efter förfallodag debiteras dröjsmålsränta enligt räntelagen<br>Eventuella invändningar mot denna faktura skall ske inom 10 dagar</p>
-<p class=muted>{notes}</p>
-<div class=foot>{sname} * {saddr_line}</div></main></body></html>",
-        title = if inv["credit_of"].is_null() { "FAKTURA" } else { "KREDITFAKTURA" },
+<div class=box><table><thead><tr><th>{l_desc}</th><th>{l_qty}</th><th>{l_unit}</th><th>{l_up}</th><th></th></tr></thead><tbody>{rows}</tbody></table>
+<div class=sp></div>
+<div class=tot><div><span>{l_sub}</span><span>{net}</span></div><div><span>{l_vatw} {rate}%:</span><span>{vat}</span></div><div><span>{l_round}</span><span>0,00</span></div><div class=g><span>{l_total}</span><span>{gross}</span></div></div></div>
+<div class=small>{interest}<br>{objections}</div>
+<div class=muted>{notes}</div>
+<div class=foot>{sname} * {footer}</div></div></body></html>",
+        hl = w.html_lang,
+        title = if is_credit { w.credit_note } else { w.invoice },
         label = esc(&label),
-        wm = if draft { "<div class=wm>UTKAST</div>" } else { "" },
+        wm = if draft { format!("<div class=wm>{}</div>", w.draft) } else { String::new() },
+        logo = esc(&s.name),
+        ca = w.customer_address,
+        l_no = w.number,
+        l_date = w.date,
+        l_terms = w.terms,
+        l_due = w.due,
+        l_your = w.your_ref,
+        l_our = w.our_ref,
+        l_org = w.org,
+        l_vat = w.vat_no,
+        l_desc = w.description,
+        l_qty = w.quantity,
+        l_unit = w.unit,
+        l_up = w.unit_price,
+        l_sub = w.subtotal,
+        l_vatw = w.vat,
+        l_round = w.rounding,
+        l_total = w.total,
+        interest = w.interest,
+        objections = w.objections,
         issue = esc(&short(issue_s)),
         due = esc(&short(due_s)),
         terms = esc(&terms),
         sname = esc(&s.name),
-        saddr_line = esc(&s.address.replace('\n', ", ")),
+        footer = esc(&footer),
         sorg = esc(&s.org),
         svat = esc(&s.vat_number),
-        fskatt = if s.f_skatt { "<div class=kv style=\"margin-top:.8rem\">Godkänd för F-skatt</div>" } else { "" },
+        pay = payment_block(&s.payment, lang),
+        fskatt = if s.f_skatt {
+            format!("<div class=pl>{}</div>", w.f_tax)
+        } else {
+            String::new()
+        },
         cname = esc(c["name"].as_str().unwrap_or("")),
         caddr = multiline(c["address"].as_str().unwrap_or("")),
-        cvat = match c["vat_number"].as_str() { Some(v) if !v.is_empty() => format!("<br>Momsreg.nr: {}", esc(v)), _ => String::new() },
-        cur = esc(currency),
         rows = rows,
         net = esc(&sv(inv["totals"]["net"].as_str().unwrap_or(""))),
         rate = inv["vat_rate"],
         vat = esc(&sv(inv["totals"]["vat"].as_str().unwrap_or(""))),
         gross = esc(&sv(inv["totals"]["gross"].as_str().unwrap_or(""))),
-        pay = payment_block(&s.payment),
         notes = multiline(inv["notes"].as_str().unwrap_or("")),
     );
+    let _ = currency;
     let mut res = html.into_response();
     let h = res.headers_mut();
     h.insert(
@@ -1305,17 +1466,21 @@ mod payment_block_tests {
     use super::payment_block;
 
     #[test]
-    fn items_stack_one_per_line_under_a_heading() {
-        let one_line = "IBAN SE22 9710 \u{b7} BIC LUNADK2B \u{b7} Account 9710-37 303 60";
-        let html = payment_block(one_line);
+    fn known_labels_become_rows_and_the_rest_stack() {
+        let one_line = "IBAN SE22 9710 \u{b7} BIC/Swift LUNADK2B \u{b7} Account 9710-37 303 60 \u{b7} Lunar Bank A/S";
+        let html = payment_block(one_line, "sv");
         assert_eq!(
             html,
-            "<div class=pay>IBAN SE22 9710<br>BIC LUNADK2B<br>Account 9710-37 303 60</div>"
+            "<div class=kv><span>Iban:</span><span>SE22 9710</span></div><div class=kv><span>Bic:</span><span>LUNADK2B</span></div><div class=kv><span>Konto:</span><span>9710-37 303 60</span></div><div class=pl>Lunar Bank A/S</div>"
         );
-        assert_eq!(
-            payment_block("Bankgiro 123-4567\n\nIBAN SE22"),
-            "<div class=pay>Bankgiro 123-4567<br>IBAN SE22</div>"
-        );
+        assert!(payment_block("Account 1", "en").contains("<span>Account:</span>"));
+        assert!(payment_block("Bankgiro 123-4567\n\nIBAN SE22", "sv").contains("Bankgiro:"));
+    }
+
+    #[test]
+    fn empty_text_and_markup_are_handled() {
+        assert_eq!(payment_block("  \n ", "sv"), "");
+        assert!(payment_block("<b>x</b>", "sv").contains("&lt;b&gt;x&lt;/b&gt;"));
     }
 
     #[test]
@@ -1326,11 +1491,5 @@ mod payment_block_tests {
         assert_eq!(super::sv_qty("80.00"), "80");
         assert_eq!(super::sv_qty("-1.00"), "-1");
         assert_eq!(super::sv_qty("2.50"), "2,50");
-    }
-
-    #[test]
-    fn empty_text_and_markup_are_handled() {
-        assert_eq!(payment_block("  \n "), "");
-        assert!(payment_block("<b>x</b>").contains("&lt;b&gt;x&lt;/b&gt;"));
     }
 }

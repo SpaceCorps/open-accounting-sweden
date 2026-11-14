@@ -271,7 +271,7 @@ export interface Invoice {
  * (a window opened after an await has no user gesture behind it). The HTML is then
  * written into it: some browsers refuse to open a blob: URL in a new tab.
  */
-export async function openInvoicePage(id: number) {
+export async function openInvoicePage(id: number, lang: "sv" | "en" = "sv") {
   const win = window.open("", "_blank");
   if (!win) {
     throw new ApiError(
@@ -282,7 +282,7 @@ export async function openInvoicePage(id: number) {
   }
   win.opener = null;
   try {
-    const res = await fetch(`/api/invoices/${id}/html`, {
+    const res = await fetch(`/api/invoices/${id}/html?lang=${lang}`, {
       headers: { Authorization: `Bearer ${getToken()}` },
     });
     if (!res.ok) throw new ApiError(res.status, "error", "could not load the invoice");
