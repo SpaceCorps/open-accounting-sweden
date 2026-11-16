@@ -61,7 +61,7 @@ oas payroll list | show ID | approve ID | delete ID | agi ID [--out FILE] | rate
 oas customer add NAME --address STREET,POSTCODE,CITY [--org-number N --vat-number V --email E] | list
 oas customer edit NAME|ID [--name N] [--address A] [--org-number N] [--vat-number V] [--email E]   (issued invoices keep their details)
 oas customer delete NAME|ID [--yes]   (only a customer no invoice uses)
-oas invoice create --customer C --line 'Description|12.5|h|900' ... [--vat 25] [--due-days 30] | from-time --customer C --project P [--from D --to D] | add-line ID --line '...' | remove-line ID LINE_ID | list | show ID | issue ID | delete ID | html ID --out FILE
+oas invoice create --customer C --line 'Description|12.5|h|900' ... [--vat 25] [--due-days 30] [--our-ref NAME] [--your-ref NAME] | from-time --customer C --project P [--from D --to D] | add-line ID --line '...' | remove-line ID LINE_ID | list | show ID | issue ID | delete ID | html ID --out FILE
 oas agent-readme
 
 ## Invoices
@@ -369,6 +369,12 @@ enum InvoiceCmd {
         due_days: Option<i64>,
         #[arg(long)]
         notes: Option<String>,
+        /// Printed as "Vår referens": your contact on this invoice
+        #[arg(long)]
+        our_ref: Option<String>,
+        /// Printed as "Er referens": the customer's contact
+        #[arg(long)]
+        your_ref: Option<String>,
     },
     /// Create a draft from a project's uninvoiced tracked time
     FromTime {
@@ -388,6 +394,12 @@ enum InvoiceCmd {
         issue_date: Option<String>,
         #[arg(long)]
         notes: Option<String>,
+        /// Printed as "Vår referens": your contact on this invoice
+        #[arg(long)]
+        our_ref: Option<String>,
+        /// Printed as "Er referens": the customer's contact
+        #[arg(long)]
+        your_ref: Option<String>,
     },
     List,
     Show {
@@ -1905,6 +1917,8 @@ fn run(cli: Cli) -> Result<(), Failure> {
                     issue_date,
                     due_days,
                     notes,
+                    our_ref,
+                    your_ref,
                 } => {
                     let mut out = vec![];
                     for l in &lines {
@@ -1918,7 +1932,7 @@ fn run(cli: Cli) -> Result<(), Failure> {
                         out.push(json!({"description": p[0].trim(), "quantity": p[1].trim(), "unit": p[2].trim(), "unit_price": p[3].trim()}));
                     }
                     let body = json!({"customer_id": customer_id(&customer)?, "vat_rate": vat, "issue_date": issue_date,
-                        "due_days": due_days, "notes": notes, "lines": out});
+                        "due_days": due_days, "notes": notes, "our_reference": our_ref, "your_reference": your_ref, "lines": out});
                     print_value(&call(&cfg, "POST", "/invoices", Some(&body))?, json_out);
                 }
                 InvoiceCmd::FromTime {
@@ -1930,9 +1944,11 @@ fn run(cli: Cli) -> Result<(), Failure> {
                     due_days,
                     issue_date,
                     notes,
+                    our_ref,
+                    your_ref,
                 } => {
                     let body = json!({"customer_id": customer_id(&customer)?, "project": project, "from": from, "to": to,
-                        "vat_rate": vat, "due_days": due_days, "issue_date": issue_date, "notes": notes});
+                        "vat_rate": vat, "due_days": due_days, "issue_date": issue_date, "notes": notes, "our_reference": our_ref, "your_reference": your_ref});
                     print_value(
                         &call(&cfg, "POST", "/invoices/from-time", Some(&body))?,
                         json_out,

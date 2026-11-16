@@ -182,6 +182,7 @@ fn open_db(path: &str) -> Result<Connection, rusqlite::Error> {
     conn.execute_batch(vat::SCHEMA)?;
     conn.execute_batch(payroll::SCHEMA)?;
     conn.execute_batch(invoices::SCHEMA)?;
+    invoices::migrate(&conn)?;
     invoices::backfill_customer_snapshots(&conn).map_err(|_| rusqlite::Error::InvalidQuery)?;
     ledger::migrate(&conn)?;
     ledger::seed(&conn)?;
@@ -2438,6 +2439,32 @@ mod tests {
         )
         .await;
         assert_eq!(orig["invoice"]["credited_by"], cid2);
+    }
+
+    #[tokio::test]
+    async fn invoice_references_are_stored_on_the_invoice() {
+        let app = app();
+        let (_, customer) = call(
+            &app,
+            Some(ADMIN),
+            "POST",
+            "/api/customers",
+            Some(json!({"name": "Kund AB", "address": "Gatan 1"})),
+        )
+        .await;
+        let cid = customer["customer"]["id"].as_i64().expect("customer id");
+        let (status, inv) = call(
+            &app,
+            Some(ADMIN),
+            "POST",
+            "/api/invoices",
+            Some(json!({"customer_id": cid, "our_reference": "Mikael Rinne", "your_reference": "Filip Abrizeh",
+                "lines": [{"description": "Konsult", "quantity": "1", "unit": "st", "unit_price": "100"}]})),
+        )
+        .await;
+        assert_eq!(status, 200, "{inv}");
+        assert_eq!(inv["invoice"]["our_reference"], "Mikael Rinne");
+        assert_eq!(inv["invoice"]["your_reference"], "Filip Abrizeh");
     }
 
     #[tokio::test]

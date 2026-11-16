@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS invoice(
   currency TEXT NOT NULL DEFAULT 'SEK',
   vat_rate INTEGER NOT NULL CHECK (vat_rate IN (25, 12, 6)),
   notes TEXT NOT NULL DEFAULT '',
+  our_reference TEXT NOT NULL DEFAULT '',
+  your_reference TEXT NOT NULL DEFAULT '',
   created_by TEXT NOT NULL,
   created_at TEXT NOT NULL,
   issued_by TEXT,
@@ -213,6 +215,23 @@ fn customer_id_of(conn: &Connection, invoice_id: i64) -> Result<i64, ApiError> {
 
 /// Invoices issued before snapshots existed get one from the customer as it is now. Nothing could
 /// edit a customer then, so these are still the details that were invoiced.
+/// Add the reference columns to databases created before invoices had references.
+pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
+    for col in ["our_reference", "your_reference"] {
+        let has: i64 = conn.query_row(
+            &format!("SELECT COUNT(*) FROM pragma_table_info('invoice') WHERE name = '{col}'"),
+            [],
+            |r| r.get(0),
+        )?;
+        if has == 0 {
+            conn.execute_batch(&format!(
+                "ALTER TABLE invoice ADD COLUMN {col} TEXT NOT NULL DEFAULT ''"
+            ))?;
+        }
+    }
+    Ok(())
+}
+
 pub fn backfill_customer_snapshots(conn: &Connection) -> Result<(), ApiError> {
     let ids: Vec<(i64, i64)> = conn
         .prepare(
@@ -346,6 +365,10 @@ pub struct NewInvoice {
     due_days: Option<i64>,
     service_date: Option<String>,
     notes: Option<String>,
+    /// Printed as "Vår referens": the seller's contact on this invoice.
+    our_reference: Option<String>,
+    /// Printed as "Er referens": the customer's contact.
+    your_reference: Option<String>,
     lines: Vec<LineBody>,
 }
 
@@ -425,6 +448,16 @@ fn insert_invoice(
         None => None,
     };
     let notes = clean(b.notes.as_deref().unwrap_or(""), "notes", 500)?;
+    let our_ref = clean(
+        b.our_reference.as_deref().unwrap_or(""),
+        "our_reference",
+        100,
+    )?;
+    let your_ref = clean(
+        b.your_reference.as_deref().unwrap_or(""),
+        "your_reference",
+        100,
+    )?;
     if b.lines.is_empty() || b.lines.len() > 100 {
         return Err(ApiError::invalid(
             "an invoice needs between 1 and 100 lines",
@@ -435,9 +468,9 @@ fn insert_invoice(
         parsed.push(parse_line(l)?);
     }
     conn.execute(
-        "INSERT INTO invoice(customer_id, issue_date, due_date, service_date, vat_rate, notes, created_by, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![b.customer_id, issue, due, service, vat, notes, actor.name, utc_string(Utc::now())],
+        "INSERT INTO invoice(customer_id, issue_date, due_date, service_date, vat_rate, notes, our_reference, your_reference, created_by, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![b.customer_id, issue, due, service, vat, notes, our_ref, your_ref, actor.name, utc_string(Utc::now())],
     )?;
     let id = conn.last_insert_rowid();
     for (d, q, u, p) in &parsed {
@@ -571,6 +604,8 @@ pub struct FromTime {
     due_days: Option<i64>,
     issue_date: Option<String>,
     notes: Option<String>,
+    our_reference: Option<String>,
+    your_reference: Option<String>,
     /// Replaces the default line text.
     description: Option<String>,
 }
@@ -712,6 +747,8 @@ pub async fn from_time(
             None
         },
         notes: b.notes.clone(),
+        our_reference: b.our_reference.clone(),
+        your_reference: b.your_reference.clone(),
         lines: vec![line],
     };
     let tx = conn.transaction()?;
@@ -757,6 +794,11 @@ fn invoice_json(conn: &Connection, id: i64) -> Result<Value, ApiError> {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?, r.get(12)?, r.get(13)?)),
         )
         .map_err(|_| ApiError::new(StatusCode::NOT_FOUND, "not_found", "no such invoice"))?;
+    let (our_ref, your_ref): (String, String) = conn.query_row(
+        "SELECT our_reference, your_reference FROM invoice WHERE id = ?1",
+        params![id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
     let line_ids: Vec<i64> = conn
         .prepare("SELECT id FROM invoice_line WHERE invoice_id = ?1 ORDER BY id")?
         .query_map(params![id], |r| r.get(0))?
@@ -810,7 +852,7 @@ fn invoice_json(conn: &Connection, id: i64) -> Result<Value, ApiError> {
         "label": number.map(|n| format!("{series}{n}")),
         "number": number, "status": status, "customer": invoice_customer(conn, id, customer_id)?,
         "issue_date": issue, "due_date": due, "service_date": service, "currency": currency,
-        "vat_rate": vat_rate, "notes": notes, "created_by": created_by, "issued_by": issued_by, "issued_at": issued_at,
+        "vat_rate": vat_rate, "notes": notes, "our_reference": our_ref, "your_reference": your_ref, "created_by": created_by, "issued_by": issued_by, "issued_at": issued_at,
         "ledger_draft_id": draft, "time_entries": entries,
         "credit_of": credit_of, "credit_of_label": credit_of_label, "credited_by": credited_by,
         "lines": lines.iter().zip(&line_ids).map(|((d, q, u, p), lid)| json!({
@@ -1114,15 +1156,16 @@ pub async fn credit_invoice(
     let today = Utc::now().date_naive().to_string();
     let tx = conn.transaction()?;
     tx.execute(
-        "INSERT INTO invoice(series, customer_id, issue_date, due_date, vat_rate, notes, created_by, created_at)
-         VALUES ('K', ?1, ?2, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO invoice(series, customer_id, issue_date, due_date, vat_rate, notes, created_by, created_at, our_reference, your_reference)
+         SELECT 'K', ?1, ?2, ?2, ?3, ?4, ?5, ?6, our_reference, your_reference FROM invoice WHERE id = ?7",
         params![
             customer_id,
             today,
             vat_rate,
             format!("Kreditfaktura avseende faktura {label}"),
             actor.name,
-            utc_string(Utc::now())
+            utc_string(Utc::now()),
+            id
         ],
     )?;
     let cid = tx.last_insert_rowid();

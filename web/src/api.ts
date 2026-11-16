@@ -256,6 +256,8 @@ export interface Invoice {
   currency: string;
   vat_rate: number;
   notes: string;
+  our_reference: string;
+  your_reference: string;
   lines: InvoiceLine[];
   totals: { net: string; vat: string; gross: string };
   ledger_draft_id: number | null;
