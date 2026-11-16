@@ -61,7 +61,7 @@ oas payroll list | show ID | approve ID | delete ID | agi ID [--out FILE] | rate
 oas customer add NAME --address STREET,POSTCODE,CITY [--org-number N --vat-number V --email E] | list
 oas customer edit NAME|ID [--name N] [--address A] [--org-number N] [--vat-number V] [--email E]   (issued invoices keep their details)
 oas customer delete NAME|ID [--yes]   (only a customer no invoice uses)
-oas invoice create --customer C --line 'Description|12.5|h|900' ... [--vat 25] [--due-days 30] [--our-ref NAME] [--your-ref NAME] | from-time --customer C --project P [--from D --to D] | add-line ID --line '...' | remove-line ID LINE_ID | list | show ID | issue ID | delete ID | html ID --out FILE
+oas invoice create --customer C --line 'Description|12.5|h|900' ... [--vat 25] [--due-days 30] [--our-ref NAME] [--your-ref NAME] | from-time --customer C --project P [--from D --to D] | add-line ID --line '...' | remove-line ID LINE_ID | list | show ID | issue ID | credit ID | delete ID | html ID --out FILE
 oas agent-readme
 
 ## Invoices
@@ -419,6 +419,10 @@ enum InvoiceCmd {
     },
     /// Assign the invoice number, lock it and propose the ledger voucher (admin only)
     Issue {
+        id: i64,
+    },
+    /// Create a credit note (series K) that reverses an issued invoice (admin only)
+    Credit {
         id: i64,
     },
     /// Delete a draft invoice (admin only)
@@ -1984,6 +1988,10 @@ fn run(cli: Cli) -> Result<(), Failure> {
                 ),
                 InvoiceCmd::Issue { id } => print_value(
                     &call(&cfg, "POST", &format!("/invoices/{id}/issue"), None)?,
+                    json_out,
+                ),
+                InvoiceCmd::Credit { id } => print_value(
+                    &call(&cfg, "POST", &format!("/invoices/{id}/credit"), None)?,
                     json_out,
                 ),
                 InvoiceCmd::Delete { id } => print_value(
