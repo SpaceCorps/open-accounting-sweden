@@ -153,6 +153,8 @@ function NewInvoice({
   const [to, setTo] = useState("");
   const [vat, setVat] = useState("25");
   const [dueDays, setDueDays] = useState("30");
+  const [ourRef, setOurRef] = useState("");
+  const [yourRef, setYourRef] = useState("");
   const [description, setDescription] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [unitPrice, setUnitPrice] = useState("");
@@ -169,6 +171,8 @@ function NewInvoice({
         customer_id: Number(customer),
         vat_rate: Number(vat),
         due_days: Number(dueDays),
+        our_reference: ourRef,
+        your_reference: yourRef,
       };
       if (mode === "time") {
         await api("/invoices/from-time", {
@@ -304,6 +308,20 @@ function NewInvoice({
                   </Select>
                 </Field>
                 <TextField label="Days until due" value={dueDays} onChange={setDueDays} />
+              </div>
+              <div className="oas-form-row">
+                <TextField
+                  label="Our reference"
+                  value={ourRef}
+                  onChange={setOurRef}
+                  hint="Your contact, printed as Vår referens"
+                />
+                <TextField
+                  label="Their reference"
+                  value={yourRef}
+                  onChange={setYourRef}
+                  hint="The customer's contact, printed as Er referens"
+                />
               </div>
             </div>
           </DialogBody>
@@ -471,7 +489,10 @@ export function InvoicesPage({ me }: { me: Me }) {
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
   const [deleteCustomer, setDeleteCustomer] = useState<Customer | null>(null);
   const [viewingId, setViewingId] = useState<number | null>(null);
-  const [confirm, setConfirm] = useState<{ inv: Invoice; what: "issue" | "delete" | "credit" } | null>(null);
+  const [confirm, setConfirm] = useState<{
+    inv: Invoice;
+    what: "issue" | "delete" | "credit";
+  } | null>(null);
 
   const reload = () => {
     invoices.reload();
@@ -712,7 +733,11 @@ export function InvoicesPage({ me }: { me: Me }) {
               : "The draft is removed and its tracked hours can be invoiced again."
         }
         confirmLabel={
-          confirm?.what === "issue" ? "Issue" : confirm?.what === "credit" ? "Create credit note" : "Delete"
+          confirm?.what === "issue"
+            ? "Issue"
+            : confirm?.what === "credit"
+              ? "Create credit note"
+              : "Delete"
         }
         onConfirm={() => confirm && void act(confirm.inv, confirm.what)}
         onCancel={() => setConfirm(null)}
